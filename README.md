@@ -118,14 +118,15 @@ Each game opens on a card that tells you what the round costs and what a win pay
 
 ## How to play
 
-1. Open the site, look over the realm, and **Take your seat**: pick a house, a lord and a name.
+1. Open the site, look over the realm, and press **Connect wallet & take your seat**. Connect a NEAR testnet
+   wallet, then pick a house, a lord and a name. On the way in, your wallet asks once for the game key.
 2. **WASD** to walk (Shift to run), **E** to talk, trade, enter and take the reins, **C** to whistle for your
    chariot, **Space** to crack the whip, **M** for the map, **J** for the Seal Book, **Esc** to pause.
 3. Follow the objective line at the bottom of the screen. The Seal Book (J) lists every trial and every hall.
 
-Without a wallet you play on a **practice purse** kept in your browser. Press **Play on NEAR testnet** (top left)
-to play for real. You connect a NEAR wallet once and approve a game key. After that, hall rounds, whips and seals are
-signed without a popup. Buying coin, staking and betting NEAR still go through your wallet.
+With the game key in place, hall rounds, whips and seals are signed without a popup. Buying coin, staking and betting
+NEAR still go through your wallet. No wallet yet? **Practice without a wallet** plays on a practice purse kept in your
+browser, and the pill at the top left connects one whenever you're ready.
 
 <table>
   <tr>

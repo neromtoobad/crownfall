@@ -1,6 +1,6 @@
 // The HUD for play mode: taking a seat, the "E" prompt, the controls, your purse, and the panel behind each place.
 import { useState } from 'react';
-import { BODIES, openPanel, pause, play, setMode, takeSeat, usePlay, type Prompt } from './realm/play.ts';
+import { BODIES, openPanel, pause, play, practise, setMode, takeSeat, usePlay, type Prompt } from './realm/play.ts';
 import { HOUSES } from './realm/layout.ts';
 import { DECREES, buy, decree, fmt, ledger, muster, priceAt, raven, sell } from './realm/ledger.ts';
 import { live, setWatch, useRace, laneLen, laneR, M, MID, standings } from './realm/race.ts';
@@ -18,7 +18,7 @@ import { MISSIONS, WARDENS, nextHint, story } from './realm/missions.ts';
 import { ROOMS } from './realm/rooms.ts';
 import { ChainBar } from './chain/ChainBar.tsx';
 import { buyCoin, burned, favour, held, price, sellCoin, supply } from './chain/game.ts';
-import { CONTRACT, EXPLORER, connect, onChain, useChain } from './chain/near.ts';
+import { CONTRACT, EXPLORER, connect, ensureKey, onChain, useChain } from './chain/near.ts';
 
 export function PlayHud() {
   const p = usePlay();
@@ -94,13 +94,36 @@ function SeatPicker() {
   const [house, setHouse] = useState(play.seat?.house ?? 2);
   const [name, setName] = useState(play.seat?.name ?? '');
   const [motto, setMotto] = useState(play.seat?.motto ?? '');
+  const [entering, setEntering] = useState(false);
+  const c = useChain();
   const h = HOUSES[house];
+  const seat = () => ({ body, house, name: name.trim() || 'A nameless lord', motto: motto.trim() });
+  // With a wallet: approve the game key now, once, so the first hall round doesn't stop for a popup. If it's
+  // declined you still go in, and the key is asked for again at your first round.
+  const enter = async () => {
+    if (!c.account) { void connect(); return; }
+    setEntering(true);
+    try { await ensureKey(); } catch { /* asked again later */ }
+    setEntering(false);
+    takeSeat(seat());
+  };
+  const short = (a: string) => (a.length > 26 ? `${a.slice(0, 12)}…${a.slice(-10)}` : a);
   return (
     <div className="scrim">
       <form className="picker" style={{ ['--c' as string]: h.colors[0], ['--c2' as string]: h.colors[1] }}
-        onSubmit={(e) => { e.preventDefault(); takeSeat({ body, house, name: name.trim() || 'A nameless lord', motto: motto.trim() }); }}>
+        onSubmit={(e) => { e.preventDefault(); void enter(); }}>
         <div className="eyebrow">The realm of Vael</div>
         <h1>Take your seat</h1>
+        <div className={`wallet-step ${c.account ? 'on' : ''}`}>
+          <NearMark size={22} />
+          {c.account ? (
+            <div><b>{short(c.account)}</b><span>Connected on NEAR testnet. {c.keyed ? 'Game key ready: hall rounds, seals and whips sign without a popup.' : 'On the way in your wallet asks once for a game key, so hall rounds and seals sign without a popup.'}</span></div>
+          ) : (
+            <div><b>Connect a NEAR wallet first</b><span>Your coin, hall rounds, seals and race bets are kept on NEAR testnet, in the realm contract. Free testnet NEAR works.</span></div>
+          )}
+          {!c.account && <button type="button" className="near-btn" onClick={() => void connect()} disabled={!!c.busy}>Connect wallet</button>}
+          {c.error && !c.busy && <p className="err">{c.error}</p>}
+        </div>
         <label>Who walks for you</label>
         <div className="chips">{BODIES.map((b) => <button type="button" key={b.id} className={b.id === body ? 'on' : ''} onClick={() => setBody(b.id)}>{b.name}</button>)}</div>
         <label>Your house</label>
@@ -115,7 +138,8 @@ function SeatPicker() {
         </div>
         <div className="actions">
           <button type="button" className="ghost" onClick={() => { play.picking = false; setMode('map'); }}>Not now</button>
-          <button type="submit" className="go">Enter the realm as House {h.name}</button>
+          {!c.account && <button type="button" className="link practise" onClick={() => { practise(); takeSeat(seat()); }}>Practice without a wallet</button>}
+          <button type="submit" className="go" disabled={entering}>{entering ? 'Approve the game key in your wallet…' : c.account ? `Enter the realm as House ${h.name}` : 'Connect wallet to enter'}</button>
         </div>
       </form>
     </div>

@@ -1,4 +1,4 @@
-import { Suspense, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { Realm, type Focus } from './realm/Realm.tsx';
 import { March, Promenade, Travellers, type MarchOrder } from './realm/People.tsx';
 import { EnvViewer, Viewer } from './Viewer.tsx';
@@ -13,6 +13,8 @@ import { StoryWorld } from './realm/Story.tsx';
 import { PlayHud } from './PlayHud.tsx';
 import { setMode, usePlay } from './realm/play.ts';
 import { ledger } from './realm/ledger.ts';
+import { startChain } from './chain/ChainBar.tsx';
+import { useChain } from './chain/near.ts';
 
 const DEMO_MARCH: MarchOrder = { id: 'demo', from: 1, to: 2, started: 0 };
 
@@ -34,6 +36,8 @@ function Game() {
   };
   const watching = useRace().watch;
   const mode = usePlay().mode;
+  const account = useChain().account;
+  useEffect(() => { startChain(); }, []);
   const h = typeof picked === 'number' && !watching && mode === 'map' ? HOUSES[picked] : undefined;
   return (
     <div className="app">
@@ -58,7 +62,7 @@ function Game() {
         <NearPill />
         <div className="top-actions">
           {mode === 'map' && <button className="ghost" onClick={() => { setPicked(undefined); setFocus({ x: 0, z: 60, dist: 980 }); }}>The whole realm</button>}
-          <button className="seat-btn" onClick={() => setMode('play')}>Take your seat</button>
+          <button className="seat-btn" onClick={() => setMode('play')}>{account ? 'Take your seat' : 'Connect wallet & take your seat'}</button>
         </div>
       </header>}
       {h && (

@@ -70,8 +70,14 @@ export function takeSeat(seat: Seat) {
   play.mode = 'play';
   emitPlay();
 }
+/** You chose "Practice without a wallet" on this visit: entering the realm stops asking. */
+let practising = false;
+export function practise() { practising = true; }
+/** Whether a wallet is connected, set by the chain module (play.ts doesn't import it). */
+export const wallet = { connected: () => false };
 export function setMode(mode: 'map' | 'play') {
-  if (mode === 'play' && !play.seat) { play.picking = true; emitPlay(); return; }
+  // Wallet first: entering without one opens the seat picker on its wallet step.
+  if (mode === 'play' && (!play.seat || (!wallet.connected() && !practising))) { play.picking = true; emitPlay(); return; }
   play.mode = mode;
   play.panel = undefined;
   play.paused = false;
