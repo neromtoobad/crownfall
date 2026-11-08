@@ -1,0 +1,31 @@
+/* The Forge HUD: heats, quality to 60%, cracks, a heat bar at the bellows and a beat track under the line. */
+.frg-top { position: absolute; z-index: 40; top: 22px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 28px; padding: 12px 22px; border-radius: 14px; background: rgba(16, 12, 10, 0.64); border: 1px solid rgba(214, 178, 110, 0.35); text-shadow: 0 1px 3px #000; pointer-events: none; }
+.frg-top small { font: 12px/1.2 var(--sans); color: var(--ink-2); }
+.frg-heats { display: flex; align-items: center; gap: 7px; }
+.frg-heats i { width: 16px; height: 16px; transform: rotate(45deg); border: 1.5px solid #c07a2a; background: rgba(0, 0, 0, 0.4); }
+.frg-heats i.done { background: linear-gradient(135deg, #ffd27a, #c07a2a); }
+.frg-heats i.now { background: #ff7a2a; box-shadow: 0 0 12px rgba(255, 122, 42, 0.9); animation: pip 0.8s ease-in-out infinite alternate; }
+.frg-heats small { margin-left: 6px; }
+.frg-q { display: flex; flex-direction: column; gap: 6px; width: 270px; }
+.frg-q small b { color: #ffd23f; font-size: 15px; }
+.frg-q .bar, .frg-temp .bar { position: relative; height: 12px; border-radius: 6px; background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(214, 178, 110, 0.5); overflow: hidden; }
+.frg-q .bar i { position: absolute; left: 0; top: 0; bottom: 0; transition: width 0.25s ease-out; }
+.frg-q .bar i.ok { background: linear-gradient(90deg, #a3781f, #ffd23f); }
+.frg-q .bar i.low { background: linear-gradient(90deg, #6a2a10, #c0502a); }
+.frg-q .bar .mark { position: absolute; left: 60%; top: -2px; bottom: -2px; width: 2px; background: #fff3d6; box-shadow: 0 0 4px #000; }
+.frg-cracks { display: flex; flex-direction: column; align-items: center; min-width: 50px; }
+.frg-cracks b { font: 700 28px/1 var(--display); color: #fff3d6; }
+.frg-temp { position: absolute; z-index: 40; left: 50%; top: 40%; transform: translateX(-50%); width: 300px; text-align: center; pointer-events: none; text-shadow: 0 1px 3px #000; }
+.frg-temp .bar { height: 16px; border-radius: 8px; }
+.frg-temp .bar i { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, #3a0600, #a01a00 30%, #ff4a06 55%, #ffd870 85%, #fff4dc); transition: width 0.12s linear; }
+.frg-temp small { display: block; margin-top: 6px; font: italic 500 18px/1 var(--serif); color: #fff6e4; }
+.game-hud .frg-judge { margin-bottom: 6px; animation: frg-pop 0.7s ease-out forwards; }
+.game-hud .frg-judge.perfect { color: #fff4c8; text-shadow: 0 0 18px rgba(255, 200, 80, 0.9), 0 2px 4px #000; }
+.game-hud .frg-judge.good { color: #ffd23f; }
+.game-hud .frg-judge.miss { color: #ff6a4a; }
+.game-hud .frg-judge small { font-size: 28px; color: #fff6e4; }
+@keyframes frg-pop { 0% { transform: scale(1.35); opacity: 1; } 70% { opacity: 1; } 100% { transform: scale(1); opacity: 0; } }
+.frg-track { position: relative; width: 460px; height: 26px; margin: 12px auto 0; border-radius: 13px; background: rgba(0, 0, 0, 0.45); border: 1px solid rgba(214, 178, 110, 0.4); transition: opacity 0.3s; overflow: hidden; }
+.frg-track b { position: absolute; left: 50%; top: 2px; bottom: 2px; width: 22px; margin-left: -11px; border-radius: 11px; border: 2px solid #fff3d6; box-shadow: 0 0 10px rgba(255, 210, 120, 0.6); }
+.frg-track i { position: absolute; top: 5px; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #ffe7a3, #c07a2a); box-shadow: 0 0 8px rgba(255, 150, 50, 0.8); }
+.frg-track i.hot { background: #fff; box-shadow: 0 0 14px #fff; }

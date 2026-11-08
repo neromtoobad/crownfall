@@ -1,0 +1,31 @@
+/* Ice Stones HUD: the scoreboard (ends, score, stones left), the head from above, the weight meter and the broom. */
+.st-board { position: absolute; z-index: 40; top: 22px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 22px; padding: 10px 20px; border-radius: 14px;
+  background: linear-gradient(180deg, rgba(18, 26, 34, 0.78), rgba(12, 18, 24, 0.7)); border: 1px solid rgba(169, 211, 238, 0.35); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); pointer-events: none; text-shadow: 0 1px 3px #000; }
+.st-end { font: 700 22px/1 var(--display); color: #e8f3fb; white-space: nowrap; }
+.st-end small { font: 13px/1 var(--sans); color: rgba(232, 243, 251, 0.6); margin-left: 2px; }
+.st-score { display: flex; gap: 18px; }
+.st-side { display: grid; grid-template-columns: auto auto; grid-template-rows: auto auto; column-gap: 12px; row-gap: 6px; align-items: center; padding: 4px 10px; border-radius: 10px; border: 1px solid transparent; transition: border-color 0.2s, background 0.2s; }
+.st-side.up { border-color: rgba(255, 210, 63, 0.55); background: rgba(255, 210, 63, 0.08); }
+.st-name { font: 600 15px/1 var(--serif); color: var(--h); }
+.st-side b { grid-row: span 2; font: 700 40px/1 var(--display); color: #fff6e4; min-width: 28px; text-align: right; }
+.st-pips { display: flex; gap: 5px; }
+.st-pips i { width: 12px; height: 12px; border-radius: 50%; background: rgba(255, 255, 255, 0.08); border: 1.5px solid rgba(255, 255, 255, 0.18); }
+.st-pips i.on { background: radial-gradient(circle at 40% 35%, #a8aaae, #55585c); border-color: var(--h); box-shadow: 0 0 6px color-mix(in srgb, var(--h) 60%, transparent); }
+
+.st-map { position: absolute; z-index: 40; right: 22px; top: 22px; border-radius: 6px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45); outline: 1px solid rgba(169, 211, 238, 0.5); pointer-events: none; }
+
+.game-hud .st-meter { position: relative; width: min(520px, 80vw); height: 26px; margin: 0 auto 14px; border-radius: 13px; overflow: hidden; background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(255, 255, 255, 0.3); }
+.st-meter .z { position: absolute; top: 0; bottom: 0; display: grid; place-items: center; border-right: 1px solid rgba(0, 0, 0, 0.35); }
+.st-meter .z em { font: 600 11px/1 var(--sans); font-style: normal; letter-spacing: 0.03em; color: rgba(255, 255, 255, 0.85); text-shadow: 0 1px 2px #000; }
+.st-meter .z.hog { background: rgba(122, 47, 47, 0.55); }
+.st-meter .z.guard { background: rgba(169, 211, 238, 0.28); }
+.st-meter .z.draw { background: linear-gradient(90deg, rgba(111, 162, 201, 0.55), rgba(238, 244, 248, 0.6), rgba(111, 162, 201, 0.55)); }
+.st-meter .z.draw em { color: #1d2a35; text-shadow: none; }
+.st-meter .z.back { background: rgba(169, 211, 238, 0.22); }
+.st-meter .z.takeout { background: rgba(212, 166, 64, 0.45); }
+.st-meter > i { position: absolute; top: -3px; bottom: -3px; width: 4px; margin-left: -2px; background: #ffd23f; box-shadow: 0 0 10px #ffd23f, 0 0 2px #000; border-radius: 2px; }
+
+.game-hud .st-sweep { width: 260px; height: 10px; margin: 0 auto 12px; border-radius: 5px; background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(214, 232, 255, 0.45); overflow: hidden; }
+.st-sweep span { display: block; height: 100%; background: linear-gradient(90deg, #a9d3ee, #ffffff); box-shadow: 0 0 10px #d6e8ff; }
+.game-hud.st-hud { padding: 14px 26px 12px; border-radius: 14px; background: rgba(10, 16, 22, 0.66); border: 1px solid rgba(169, 211, 238, 0.28); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35); min-width: 420px; }
+.st-hud .line { font-size: 22px; }

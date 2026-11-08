@@ -1,0 +1,12 @@
+node_modules/
+dist/
+target/
+.DS_Store
+.env*
+.vercel/
+# Source art (big): generated models, textures, environments, character sheets and screenshots
+design/models/
+design/tex/
+design/env/
+design/chars/
+design/*.png

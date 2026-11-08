@@ -1,0 +1,24 @@
+/* Pinewatch Archery HUD: the sight with its draw ring, the wind vane, score pops and the arrow-cam letterbox. */
+.game-hud .big .arc-of { font: 500 18px/1 var(--sans); color: var(--ink-2); margin-left: 4px; }
+.arc-sight { position: absolute; z-index: 40; left: 50%; top: 50%; width: 46px; height: 46px; transform: translate(-50%, -50%); pointer-events: none; }
+.arc-sight .ring { position: absolute; inset: 0; border-radius: 50%; -webkit-mask: radial-gradient(circle, transparent 17px, #000 18px, #000 22px, transparent 23px); mask: radial-gradient(circle, transparent 17px, #000 18px, #000 22px, transparent 23px); filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.9)); }
+.arc-sight .dot { position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px; border-radius: 50%; background: #fff3d6; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.7); }
+.arc-sight::before, .arc-sight::after { content: ''; position: absolute; background: rgba(255, 243, 214, 0.75); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45); }
+.arc-sight::before { left: 50%; top: -12px; width: 2px; height: 9px; margin-left: -1px; }
+.arc-sight::after { left: 50%; bottom: -12px; width: 2px; height: 9px; margin-left: -1px; }
+.arc-sight.full .ring { filter: drop-shadow(0 0 6px rgba(255, 210, 63, 0.9)); }
+.arc-wind { position: absolute; z-index: 40; right: 24px; top: 92px; display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 12px; background: rgba(14, 18, 12, 0.6); border: 1px solid rgba(214, 178, 110, 0.35); pointer-events: none; text-shadow: 0 1px 3px #000; }
+.arc-wind .vane { width: 44px; height: 44px; border-radius: 50%; border: 1.5px solid rgba(214, 178, 110, 0.6); position: relative; transition: transform 0.4s ease-out; }
+.arc-wind .vane i { position: absolute; left: 50%; top: 5px; bottom: 5px; width: 3px; margin-left: -1.5px; background: linear-gradient(0deg, rgba(255, 243, 214, 0.2), #fff3d6); border-radius: 2px; }
+.arc-wind .vane i::before { content: ''; position: absolute; left: 50%; top: -3px; margin-left: -6px; border: 6px solid transparent; border-bottom: 9px solid #fff3d6; border-top: 0; }
+.arc-wind .meta { display: flex; flex-direction: column; gap: 4px; min-width: 96px; }
+.arc-wind small { font: 12px/1 var(--sans); color: var(--ink-2); }
+.arc-wind small.v { color: #fff3d6; font-size: 13px; }
+.arc-wind .bar { height: 7px; border-radius: 4px; background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(214, 178, 110, 0.4); overflow: hidden; }
+.arc-wind .bar i { display: block; height: 100%; background: linear-gradient(90deg, #6fae3a, #ffd23f 60%, #ff8a5c); transition: width 0.3s; }
+.arc-pop { position: absolute; z-index: 41; left: 50%; top: 32%; transform: translate(-50%, -50%); font: 800 84px/1 var(--display); color: #fff3d6; text-shadow: 0 4px 0 #24301c, 0 0 30px rgba(0, 0, 0, 0.8); pointer-events: none; animation: arc-pop 1.4s ease-out forwards; }
+.arc-pop.gold { color: #ffd23f; font-size: 120px; text-shadow: 0 4px 0 #6b3a06, 0 0 40px rgba(255, 190, 60, 0.9); }
+.arc-pop.nil { color: #c9b9a6; font-size: 64px; }
+@keyframes arc-pop { 0% { transform: translate(-50%, -30%) scale(1.6); opacity: 0; } 12% { transform: translate(-50%, -50%) scale(1); opacity: 1; } 70% { opacity: 1; } 100% { transform: translate(-50%, -90%) scale(0.95); opacity: 0; } }
+.arc-cam { position: absolute; z-index: 38; inset: 0; pointer-events: none; box-shadow: inset 0 11vh 0 0 rgba(0, 0, 0, 0.85), inset 0 -11vh 0 0 rgba(0, 0, 0, 0.85); animation: arc-cam 0.25s ease-out; }
+@keyframes arc-cam { from { opacity: 0; } to { opacity: 1; } }

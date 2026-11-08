@@ -1,0 +1,19 @@
+/* The Asp's Basket HUD: sand-clock, bank bar to twenty, three lives, a red vignette as the asp rears. */
+.asp-vignette { position: absolute; inset: 0; z-index: 39; pointer-events: none; background: radial-gradient(ellipse at 50% 45%, transparent 45%, rgba(150, 10, 10, 0.55) 100%); transition: opacity 0.12s linear; }
+.asp-vignette.bit { background: radial-gradient(ellipse at 50% 45%, rgba(255, 30, 20, 0.18) 20%, rgba(170, 0, 0, 0.75) 100%); }
+.asp-top { position: absolute; z-index: 40; top: 22px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 28px; padding: 12px 22px; border-radius: 14px; background: rgba(12, 16, 10, 0.62); border: 1px solid rgba(214, 178, 110, 0.35); text-shadow: 0 1px 3px #000; pointer-events: none; }
+.asp-time { display: flex; flex-direction: column; align-items: center; min-width: 54px; }
+.asp-time b { font: 700 34px/1 var(--display); color: #fff3d6; }
+.asp-time small, .asp-bank small { font: 12px/1.2 var(--sans); color: var(--ink-2); letter-spacing: 0.02em; }
+.asp-bank { display: flex; flex-direction: column; gap: 6px; width: 260px; }
+.asp-bank small b { color: #ffd23f; font-size: 15px; }
+.asp-bank .bar { position: relative; height: 12px; border-radius: 6px; background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(214, 178, 110, 0.5); overflow: hidden; }
+.asp-bank .bar i { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, #a3781f, #ffd23f); transition: width 0.25s ease-out; }
+.asp-bank .bar i.full { background: linear-gradient(90deg, #6fae3a, #c6ff8a); box-shadow: 0 0 12px rgba(185, 255, 138, 0.8); }
+.asp-lives { display: flex; gap: 8px; }
+.asp-lives i { width: 20px; height: 26px; background: radial-gradient(circle at 40% 35%, #8ee06a, #2f5a33); clip-path: polygon(50% 0, 100% 35%, 80% 100%, 20% 100%, 0 35%); filter: drop-shadow(0 0 4px rgba(150, 255, 120, 0.6)); }
+.asp-lives i.gone { background: #3a2a2a; filter: none; opacity: 0.5; }
+.game-hud .asp-hand { display: flex; align-items: baseline; justify-content: center; gap: 10px; margin-bottom: 6px; animation: asp-pop 0.18s ease-out; }
+.game-hud .asp-hand small { font: italic 500 20px/1 var(--serif); color: #fff6e4; }
+.asp-bonus { font: 700 20px/1 var(--display); color: #c6ff8a; margin-bottom: 8px; }
+@keyframes asp-pop { from { transform: scale(1.25); } to { transform: scale(1); } }

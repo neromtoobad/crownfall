@@ -1,0 +1,15 @@
+/* Axe Throw HUD: the score pop and the power meter beside the throw. */
+.game-hud .big .axe-of { font: 500 18px/1 var(--sans); color: var(--ink-2); margin-left: 4px; }
+.axe-pop { position: absolute; z-index: 41; left: 50%; top: 30%; transform: translate(-50%, -50%); font: 800 84px/1 var(--display); color: #fff3d6; text-shadow: 0 4px 0 #3a1a0e, 0 0 30px rgba(0, 0, 0, 0.8); pointer-events: none; animation: axe-pop 1.3s ease-out forwards; }
+.axe-pop.gold { color: #ffd23f; font-size: 120px; text-shadow: 0 4px 0 #6b3a06, 0 0 40px rgba(255, 190, 60, 0.9); }
+.axe-pop.nil { color: #c9b9a6; font-size: 64px; }
+@keyframes axe-pop { 0% { transform: translate(-50%, -30%) scale(1.6); opacity: 0; } 12% { transform: translate(-50%, -50%) scale(1); opacity: 1; } 70% { opacity: 1; } 100% { transform: translate(-50%, -90%) scale(0.95); opacity: 0; } }
+.axe-meter { position: absolute; z-index: 40; left: 14vw; top: 50%; transform: translateY(-50%); width: 26px; height: 300px; border-radius: 13px; background: linear-gradient(0deg, rgba(120, 40, 20, 0.7), rgba(40, 24, 16, 0.75) 45%, rgba(120, 40, 20, 0.7)); border: 2px solid rgba(214, 178, 110, 0.7); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6); pointer-events: none; transition: opacity 0.2s; }
+.axe-meter.set { opacity: 0.75; }
+.axe-meter.set .needle { background: #ffd23f; box-shadow: 0 0 10px #ffd23f, 0 0 2px #000; }
+.axe-meter .sweet { position: absolute; left: 0; right: 0; background: linear-gradient(0deg, #c99a2e, #ffe28a, #c99a2e); box-shadow: 0 0 14px rgba(255, 210, 63, 0.7); }
+.axe-meter .needle { position: absolute; left: -12px; right: -12px; height: 4px; margin-bottom: -2px; background: #fff; border-radius: 2px; box-shadow: 0 0 8px #fff, 0 0 2px #000; }
+.axe-meter small { position: absolute; top: calc(100% + 10px); left: 50%; transform: translateX(-50%); font: 13px/1 var(--sans); color: var(--ink-2); text-shadow: 0 1px 3px #000; }
+.axe-meter::before, .axe-meter::after { position: absolute; left: calc(100% + 10px); font: 12px/1 var(--sans); color: var(--ink-2); text-shadow: 0 1px 3px #000; white-space: nowrap; }
+.axe-meter::before { content: 'high'; top: 4px; }
+.axe-meter::after { content: 'low'; bottom: 4px; }
