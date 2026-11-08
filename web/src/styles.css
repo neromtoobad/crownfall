@@ -545,3 +545,53 @@ html.touch .game-hud .line { font-size: 16px; }
 html.touch .game-hud.st-hud { min-width: 0; width: calc(100vw - 470px); padding: 8px 12px; left: calc(50% - 20px); }
 html.touch .st-board { transform: translateX(-50%) scale(0.62); transform-origin: top center; top: 6px; }
 html.touch .st-map { transform: scale(0.5); transform-origin: right top; top: 96px; right: 12px; }
+
+/* ---- Phones, second pass (iPhone): keep everything inside the safe area, out from under the notch and the home bar,
+   and keep the story out of the way of your thumbs. ---- */
+html.touch { --sl: max(10px, env(safe-area-inset-left)); --sr: max(10px, env(safe-area-inset-right)); --st: max(8px, env(safe-area-inset-top)); --sb: max(8px, env(safe-area-inset-bottom)); }
+html.touch, html.touch body, html.touch #root { height: 100%; height: 100dvh; touch-action: none; -webkit-text-size-adjust: 100%; }
+html.touch .touch-pause { top: var(--st); left: var(--sl); width: 36px; height: 36px; }
+html.touch .chainbar { top: var(--st); left: calc(var(--sl) + 44px); }
+html.touch .chainbar .connect.practice { padding: 5px 9px; font-size: 11px; gap: 5px; }
+html.touch .status { top: var(--st); right: var(--sr); gap: 0; }
+html.touch .status .money { font-size: 20px; gap: 5px; }
+html.touch .status .money em { font-size: 13px; }
+html.touch .status .coinrow { font-size: 12px; }
+html.touch .status .crowns { font-size: 12px; }
+html.touch .status .who, html.touch .status .practice { display: none; }
+html.touch .radar { right: var(--sr); top: calc(var(--st) + 58px); }
+html.touch .sealbar { right: calc(var(--sr) + 92px); top: var(--st); padding: 3px 8px 3px 5px; gap: 4px; }
+html.touch .sealbar i { width: 20px; height: 20px; font-size: 10px; }
+html.touch .sealbar span { font-size: 11px; margin-left: 3px; }
+html.touch .objective { top: calc(var(--st) + 40px); bottom: auto; min-width: 0; max-width: calc(100% - 300px); font-size: 12px; padding: 4px 10px; }
+html.touch .touch-btns { right: var(--sr); bottom: var(--sb); }
+html.touch .area { right: auto; left: 50%; transform: translateX(-50%); bottom: auto; top: calc(var(--st) + 74px); text-align: center; }
+html.touch .area.on { transform: translateX(-50%); }
+html.touch .area b { font-size: 18px; }
+html.touch .area b::after { margin: 4px auto 3px; }
+html.touch .area small { font-size: 12px; }
+html.touch .prompt { bottom: calc(var(--sb) + 8px); font-size: 12px; padding: 6px 10px; }
+html.touch .prompt kbd { display: none; }
+html.touch .bark { bottom: calc(var(--sb) + 52px); font-size: 13px; }
+/* No cinema bars on a phone (the screen is short already): the lines sit up top in a small box. */
+html.touch .letterbox { display: none; }
+html.touch .subtitle { top: calc(var(--st) + 44px); bottom: auto; width: min(560px, calc(100% - 300px)); padding: 8px 14px 9px; border-radius: 10px; background: rgba(10, 7, 5, 0.72);
+  font-size: 15px; line-height: 1.35; text-shadow: none; }
+html.touch .subtitle b { font-size: 11px; margin-bottom: 2px; }
+html.touch .subtitle small { margin-top: 5px; font-size: 11px; }
+html.touch .tip { top: calc(var(--st) + 44px); bottom: auto; left: 50%; transform: translateX(-50%); width: min(380px, calc(100% - 300px)); font-size: 13px; padding: 10px 30px 10px 12px; }
+html.touch .tip h4 { margin-bottom: 6px; }
+html.touch .tip ul { gap: 4px 10px; }
+html.touch .tip .keys i { font-size: 13px; }
+html.touch .tip p { margin-top: 6px; font-size: 12px; }
+/* While someone is talking: one big Continue under the right thumb and a Skip; the stick waits. */
+.talk-btns { z-index: 37; position: absolute; right: var(--sr, 16px); bottom: var(--sb, 16px); display: flex; gap: 10px; align-items: flex-end; }
+.talk-btns button { height: 52px; padding: 0 18px; border-radius: 26px; border: 2px solid rgba(255, 255, 255, 0.35); background: rgba(18, 14, 11, 0.7); color: #fff; font: 600 13px/1 var(--sans); }
+.talk-btns button.big { height: 72px; padding: 0 26px; border-radius: 36px; background: rgba(255, 210, 63, 0.92); color: #1a130c; border-color: #ffd23f; font-size: 15px; }
+html.touch .game-leave-btn { top: var(--st); left: var(--sl); }
+html.touch .gpad.left { left: var(--sl); bottom: var(--sb); }
+html.touch .gpad.right { right: var(--sr); bottom: var(--sb); }
+/* The tip goes low, between the stick and the buttons (above the Use prompt), so the objective up top stays readable. */
+html.touch .tip { top: auto; bottom: calc(var(--sb) + 46px); width: min(340px, calc(100% - 400px)); background: rgba(14, 10, 7, 0.82); border-radius: 0 8px 8px 0; }
+html.touch .sealbar { right: calc(var(--sr) + 112px); }
+html.touch .sealbar span { display: none; }

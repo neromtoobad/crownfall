@@ -313,6 +313,13 @@ export function say(lines: Line[], then?: () => void) {
   document.exitPointerLock?.();
   emitPlay();
 }
+/** Skip to the end of what's being said (its last step still runs). */
+export function skipTalk() {
+  const t = story.talk;
+  if (!t) return;
+  t.i = t.lines.length - 1;
+  nextLine();
+}
 /** Next line (E, Space or a click); the last one closes the talk. */
 export function nextLine() {
   const t = story.talk;

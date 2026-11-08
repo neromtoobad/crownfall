@@ -4,7 +4,7 @@
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { keys, me, play, press, stick, usePlay } from './realm/play.ts';
 import { openMap } from './Radar.tsx';
-import { story, nextLine } from './realm/missions.ts';
+import { story, nextLine, skipTalk } from './realm/missions.ts';
 import { quitGame, session } from './games/host.ts';
 
 const R = 56;
@@ -40,8 +40,15 @@ function WorldTouch() {
   const [base, setBase] = useState<{ x: number; y: number }>();
   const [knob, setKnob] = useState({ x: 0, y: 0 });
   const ids = useRef<{ stick?: number; look?: number; lx: number; ly: number }>({ lx: 0, ly: 0 });
+  // A thumb still down when a line starts or a panel opens never sends its "up": let the stick go, or you'd walk off on
+  // your own once it closes.
+  const talking = !!story.talk;
+  useEffect(() => {
+    const free = () => { ids.current.stick = ids.current.look = undefined; setBase(undefined); setKnob({ x: 0, y: 0 }); stick.active = false; stick.x = stick.y = 0; };
+    if (talking) free();
+    return free;
+  }, [talking]);
   const down = (e: React.PointerEvent) => {
-    if (story.talk) { nextLine(); return; }
     try { (e.target as Element).setPointerCapture?.(e.pointerId); } catch { /* not a live pointer */ }
     if (e.clientX < innerWidth * 0.45 && ids.current.stick === undefined) {
       ids.current.stick = e.pointerId; setBase({ x: e.clientX, y: e.clientY }); setKnob({ x: 0, y: 0 }); stick.active = true;
@@ -66,13 +73,23 @@ function WorldTouch() {
     if (e.pointerId === ids.current.stick) { ids.current.stick = undefined; setBase(undefined); stick.active = false; stick.x = stick.y = 0; }
     if (e.pointerId === ids.current.look) ids.current.look = undefined;
   };
-  // Where the stick rests when no thumb is on it: bottom left, so you can see where to put your thumb.
-  const rest = { x: 30 + R + 8, y: innerHeight - 30 - R - 8 };
-  const at = base ?? rest;
+  // Someone is talking: the stick and buttons wait. Tap anywhere (or Continue) for the next line, or skip it all.
+  if (story.talk) return (
+    <>
+      <div className="touch-pad" onPointerDown={(e) => { e.preventDefault(); nextLine(); }} />
+      <div className="talk-btns">
+        <button onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); skipTalk(); }}>Skip</button>
+        <button className="big" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); nextLine(); }}>Continue</button>
+      </div>
+    </>
+  );
+  const D = (R + 8) * 2;
+  // Where the stick rests when no thumb is on it: bottom left inside the safe area, so you can see where to put your thumb.
+  const pos = base ? { left: base.x - R - 8, top: base.y - R - 8 } : { left: 'calc(var(--sl, 10px) + 14px)', top: `calc(100% - var(--sb, 8px) - ${D + 14}px)` };
   return (
     <>
       <div className="touch-pad" onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} />
-      <div className={`stick ${base ? 'on' : 'rest'}`} style={{ left: at.x - R - 8, top: at.y - R - 8, width: (R + 8) * 2, height: (R + 8) * 2 }}>
+      <div className={`stick ${base ? 'on' : 'rest'}`} style={{ ...pos, width: D, height: D }}>
         <i style={{ transform: `translate(${knob.x}px, ${knob.y}px)` }} />
         {!base && <span>Move</span>}
       </div>

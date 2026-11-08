@@ -12,7 +12,7 @@ import { HOUSES } from './layout.ts';
 import { HORSE_SCALE, WHEEL_X, chariotMats, horseDepth, horseMaterial, rigHorse, runnerWorld, useChariotGeo } from './Race.tsx';
 import { M, live, setWatch } from './race.ts';
 import { raceKey } from './drive.ts';
-import { emitPlay, keys, me, openPanel, pause, play, stick, takePressed, usePlay, type Seat, hushed, isAction } from './play.ts';
+import { emitPlay, keys, me, openPanel, pause, play, stick, takePressed, usePlay, type Seat, hushed, isAction, TOUCH } from './play.ts';
 import { nextLine, story } from './missions.ts';
 import { mapOpen, openMap } from '../Radar.tsx';
 import { crackWhip, hoof, step } from './sound.ts';
@@ -376,9 +376,10 @@ function Player({ seat }: { seat: Seat }) {
     if (driving && idle > 1.4 && cs > 3) {
       let d = c.yaw + Math.PI - me.camYaw; d = Math.atan2(Math.sin(d), Math.cos(d));
       me.camYaw += d * Math.min(1, dt * 2.2);
-    } else if (!driving && idle > 2.2 && me.speed > WALK * 0.8) {
+    } else if (!driving && idle > (TOUCH ? 0.9 : 2.2) && me.speed > WALK * (TOUCH ? 0.5 : 0.8)) {
+      // On a phone the camera swings round sooner and harder, so the stick alone is enough to get about.
       let d = me.yaw + Math.PI - me.camYaw; d = Math.atan2(Math.sin(d), Math.cos(d));
-      me.camYaw += d * Math.min(1, dt * 0.9 * (me.speed / RUN));
+      me.camYaw += d * Math.min(1, dt * (TOUCH ? 1.7 : 0.9) * Math.max(TOUCH ? 0.6 : 0, me.speed / RUN));
     }
     const spd = driving ? Math.min(1, cs / CAR_MAX) : Math.min(1, me.speed / RUN);
     // Targets for this frame. Distance and FOV are geared to pitch: look up and the camera comes in and widens.

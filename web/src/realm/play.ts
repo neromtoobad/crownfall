@@ -121,7 +121,13 @@ export const TOUCH = typeof window !== 'undefined' && (new URLSearchParams(locat
 /** Lighter rendering: phones and tablets, or ?low. Lower resolution, smaller shadows, no post effects, fewer people. */
 export const LOW = typeof window !== 'undefined' && (TOUCH || new URLSearchParams(location.search).has('low'));
 
-if (typeof document !== 'undefined' && TOUCH) document.documentElement.classList.add('touch');
+if (typeof document !== 'undefined' && TOUCH) {
+  document.documentElement.classList.add('touch');
+  // iOS Safari ignores user-scalable=no: a pinch or a quick double tap would zoom the page instead of playing.
+  const no = (e: Event) => e.preventDefault();
+  document.addEventListener('gesturestart', no, { passive: false });
+  document.addEventListener('dblclick', no, { passive: false });
+}
 
 /** On a phone: go full screen and hold landscape (Android Chrome honours both; iOS has neither for pages, so there
  *  the rotate screen asks instead). Needs a tap, so it's called from the buttons that take you into the realm. */

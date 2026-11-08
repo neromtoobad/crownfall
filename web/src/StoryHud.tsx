@@ -54,7 +54,7 @@ export function Talk() {
     <>
       <div className={`letterbox lb-top ${t ? 'on' : ''}`} />
       <div className={`letterbox lb-bottom ${t ? 'on' : ''}`} onClick={nextLine} />
-      {t && <div className="subtitle" onClick={nextLine}><b>{t.lines[t.i].who}</b>{t.lines[t.i].text}<small>E to continue</small></div>}
+      {t && <div className="subtitle" onClick={nextLine}><b>{t.lines[t.i].who}</b>{t.lines[t.i].text}<small>{TOUCH ? 'Tap to continue' : 'E to continue'}</small></div>}
     </>
   );
 }
@@ -146,15 +146,17 @@ export function Tips() {
   const [tip, setTip] = useState<Tip>();
   const seen = useRef<Set<string>>(new Set((() => { try { const v = JSON.parse(localStorage.getItem('crownfall.tips') ?? '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })()));
   const want = play.driving ? 'drive' : 'start';
+  // Wait for whoever is talking to finish: a tip over a cutscene is just noise.
+  const talking = !!story.talk;
   useEffect(() => {
-    if (seen.current.has(want)) return;
+    if (talking || seen.current.has(want)) return;
     seen.current.add(want);
     try { localStorage.setItem('crownfall.tips', JSON.stringify([...seen.current])); } catch { /* private window */ }
     setTip(TIPS[want]);
     const id = setTimeout(() => setTip(undefined), 11000);
     return () => clearTimeout(id);
-  }, [want]);
-  if (!tip) return null;
+  }, [want, talking]);
+  if (!tip || talking) return null;
   return (
     <div className="tip" onClick={() => setTip(undefined)}>
       <h4>{tip.title}</h4>

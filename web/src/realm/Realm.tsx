@@ -1,7 +1,7 @@
 // The whole realm in one canvas: sky, light, land, water, forests, roads, castles, labels and the camera.
-import { Suspense, lazy, useEffect, useRef } from 'react';
+import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Html, MapControls, Sky, useGLTF, useTexture } from '@react-three/drei';
+import { Html, MapControls, PerformanceMonitor, Sky, useGLTF, useTexture } from '@react-three/drei';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import * as THREE from 'three';
 import type { MapControls as MapControlsImpl } from 'three-stdlib';
@@ -22,6 +22,9 @@ import { LOW, markReady, me, play, usePlay } from './play.ts';
 
 // Models are Draco-compressed; the decoder is served from this site (public/draco), not a CDN.
 useGLTF.setDecoderPath('/draco/');
+// Phones get the characters with 512 px textures (public/models/lo), desktops the sharper 1024 px set. One switch here
+// rather than at every place a character loads.
+if (LOW) THREE.DefaultLoadingManager.setURLModifier((u) => (u.startsWith('/models/') && !u.startsWith('/models/lo/') ? '/models/lo/' + u.slice(8) : u));
 // The land, all requested at once: otherwise each part only asks for its files once the part before it has loaded.
 ['grass', 'dirt', 'rock', 'wheat', 'sand', 'marsh'].forEach((n) => useTexture.preload(`/tex/${n}.jpg`));
 ['keep', 'throne-hall', 'tower', 'wall', 'townhouse', 'cottage'].forEach((n) => useGLTF.preload(`/env/${n}.glb`));
@@ -48,9 +51,12 @@ const focusAt = new THREE.Vector3();
 export interface Focus { x: number; z: number; dist: number }
 
 export function Realm({ focus, onPick, children }: { focus?: Focus; onPick: (house: number | 'capital') => void; children?: React.ReactNode }) {
+  // Phones start sharp and give up resolution when frames fall behind (and take it back when they recover).
+  const [dpr, setDpr] = useState(1.5);
   return (
-    <Canvas shadows dpr={LOW ? [1, 1.25] : [1, 1.5]} camera={{ fov: 42, near: 1, far: 6000, position: START.pos }} gl={{ antialias: false, stencil: false, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.0 }}>
+    <Canvas shadows dpr={LOW ? Math.min(dpr, devicePixelRatio) : [1, 1.5]} camera={{ fov: 42, near: 1, far: 6000, position: START.pos }} gl={{ antialias: LOW, stencil: false, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.0 }}>
       <color attach="background" args={['#c9b79a']} />
+      {LOW && <PerformanceMonitor bounds={() => [42, 58]} flipflops={4} onDecline={() => setDpr((d) => Math.max(0.85, +(d - 0.25).toFixed(2)))} onIncline={() => setDpr((d) => Math.min(1.5, +(d + 0.25).toFixed(2)))} />}
       <Haze />
       <Outdoors><Sky sunPosition={SUN.clone().multiplyScalar(1000)} turbidity={4.5} rayleigh={2.2} mieCoefficient={0.004} mieDirectionalG={0.86} /></Outdoors>
       {/* Warm sun, cool sky fill, warm ground bounce: shadows go blue, never black. Indoors the fill drops away and the
