@@ -17,7 +17,9 @@ moves the price.
 
 - **Play:** https://crownfall.nerom.site. It runs on NEAR testnet, and you can try it without a wallet.
 - **Contract:** [`crownfall-vael.testnet`](https://testnet.nearblocks.io/address/crownfall-vael.testnet) (Rust, near-sdk 5, [`chain/`](chain/src/lib.rs))
-- Built for the NEAR HACKATHON, November 2026.
+- Built for the NEAR HACKATHON, November 2026, in four tracks ([see below](#hackathon-tracks)). The same team's
+  other entry is [Parallax](https://github.com/neromtoobad/parallax), a company of AI agents that bid for work. The two
+  projects are independent: no shared code or contracts.
 
 <table>
   <tr>
@@ -29,6 +31,15 @@ moves the price.
     <td>Every keep has a hall you can walk into. This is House Draven's, at Stonedeep.</td>
   </tr>
 </table>
+
+## Hackathon tracks
+
+| Track | What Crownfall does for it | Where to look |
+|---|---|---|
+| **Memecoins With Mechanics** | Eight house coins, each on its own curve (price = NEAR reserve ÷ supply). The meme is the mechanic: the only way to play a house's hall game is to burn its coin, so every round played lifts the price for everyone who holds that house. Whips at the races burn coin too, and 2% of every trade feeds the crown pool. | [`chain/src/lib.rs`](chain/src/lib.rs) (`buy`, `sell`, `enter`, `whip`), [`web/src/chain/game.ts`](web/src/chain/game.ts), the Mint panel in [`web/src/PlayHud.tsx`](web/src/PlayHud.tsx) |
+| **Games With Real Economies** | A 3D realm with nine hall games, a story of seven trials and chariot racing. Rounds cost real coin, the Library is staked in NEAR, and races take pari-mutuel NEAR bets settled by running the race inside the contract. The chain stays in the background: one wallet connect and a game key, then rounds, seals and whips sign without popups. | [`web/src/games/`](web/src/games/) (`host.ts` is the round lifecycle), [`web/src/realm/missions.ts`](web/src/realm/missions.ts), [`chain/src/sim.rs`](chain/src/sim.rs) + [`web/src/realm/raceSim.ts`](web/src/realm/raceSim.ts), [`web/src/chain/near.ts`](web/src/chain/near.ts) (game key) |
+| **Social Money** | Each house is a community with a shared treasury and reward rules. The crown pool collects 2% of every trade and every lost stake. When the season ends the house its players lifted highest is crowned, and the pool is split among that house's players by the favour they earned. | [`chain/src/lib.rs`](chain/src/lib.rs) (`add_favour`, `end_season`, `claim_crown`), the crown test in [`chain/src/tests.rs`](chain/src/tests.rs) |
+| **Open Innovation** | A memecoin market you walk through: the price chart is a living realm, trading is a trip to the Mint, and the leaderboard is a throne. The race that pays out is the same deterministic race you watch, checked bit for bit between Rust and TypeScript. | The whole repo; the race check is `sim_matches_js` in [`chain/src/tests.rs`](chain/src/tests.rs) |
 
 ## The story
 
