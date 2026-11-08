@@ -595,3 +595,11 @@ html.touch .gpad.right { right: var(--sr); bottom: var(--sb); }
 html.touch .tip { top: auto; bottom: calc(var(--sb) + 46px); width: min(340px, calc(100% - 400px)); background: rgba(14, 10, 7, 0.82); border-radius: 0 8px 8px 0; }
 html.touch .sealbar { right: calc(var(--sr) + 112px); }
 html.touch .sealbar span { display: none; }
+/* The Ashen Throne: houses ranked by this season's favour, each with a bar against the leader. */
+.throne-row { position: relative; overflow: hidden; }
+.throne-row i { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--c); opacity: 0.85; transition: width 0.6s ease; }
+.go-row { display: flex; justify-content: center; }
+.throne-past { display: grid; gap: 8px; justify-items: start; padding: 10px 12px; border-radius: 8px; background: rgba(255, 210, 63, 0.07); border: 1px solid rgba(255, 210, 63, 0.25); font-size: 14px; }
+.throne-past b { font: 600 15px/1.35 var(--serif); color: #f6e7c4; }
+.throne-list { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.throne-list .item { padding: 7px 10px; }

@@ -1,5 +1,5 @@
 // The HUD for play mode: taking a seat, the "E" prompt, the controls, your purse, and the panel behind each place.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { BODIES, openPanel, pause, play, practise, setMode, takeSeat, usePlay, type Prompt } from './realm/play.ts';
 import { HOUSES } from './realm/layout.ts';
 import { DECREES, buy, decree, fmt, ledger, muster, priceAt, raven, sell } from './realm/ledger.ts';
@@ -17,8 +17,8 @@ import { Fade, SealBar, SealGlyph } from './StoryHud.tsx';
 import { MISSIONS, WARDENS, nextHint, story } from './realm/missions.ts';
 import { ROOMS } from './realm/rooms.ts';
 import { ChainBar } from './chain/ChainBar.tsx';
-import { buyCoin, burned, favour, held, price, sellCoin, supply } from './chain/game.ts';
-import { CONTRACT, EXPLORER, connect, ensureKey, onChain, useChain } from './chain/near.ts';
+import { buyCoin, burned, claimCrown, crownOf, endSeason, favour, held, price, sellCoin, supply, type Crown } from './chain/game.ts';
+import { CONTRACT, EXPLORER, connect, ensureKey, onChain, units, useChain } from './chain/near.ts';
 
 export function PlayHud() {
   const p = usePlay();
@@ -263,15 +263,59 @@ function LordPanel({ house }: { house: number }) {
 }
 
 function Council() {
+  const c = useChain();
+  const live = onChain() && !!c.realm;
+  const realm = c.realm;
+  const [past, setPast] = useState<Crown | null>();
+  const [busy, setBusy] = useState(false);
+  const season = realm?.season ?? 1;
+  // Last season's result and your share of it, read fresh each time the hall opens (and after crowning or claiming).
+  const load = () => { if (live && c.account && season > 1) void crownOf(season - 1, c.account).then(setPast).catch(() => setPast(null)); };
+  useEffect(load, [live, c.account, season]); // eslint-disable-line react-hooks/exhaustive-deps
+  const endsMs = realm ? Number(BigInt(realm.season_ends_ns) / 1_000_000n) : 0;
+  const left = endsMs - Date.now();
+  const fav = (h: number) => (live ? units(realm!.houses[h].favour) : favour(h));
+  const order = HOUSES.map((x) => x.id).sort((a, b) => fav(b) - fav(a));
+  const top = Math.max(1e-9, fav(order[0]));
+  const clock = left > 0 ? `${Math.floor(left / 3_600_000)} h ${Math.floor((left % 3_600_000) / 60_000)} min left` : 'over: the throne is waiting for a crowning';
+  const act = async (f: () => Promise<unknown>) => { setBusy(true); try { await f(); } catch { /* the chain bar shows why */ } setBusy(false); load(); };
+  const share = past ? units(past.share) : 0;
   return (
     <>
-      <div className="eyebrow">Emberfall · the hall of the Ashen Throne</div>
-      <h2>The council of the realm</h2>
-      <p className="lede">Each house keeps a council of seven elders, a Sputnik DAO on NEAR. A third of the elders can call a rebellion against a lord who rules badly.</p>
-      <div className="list">{HOUSES.map((x) => (
-        <div key={x.id} className="item flat" style={{ ['--c' as string]: x.colors[0] }}><b>House {x.name}</b><small>{x.seat}</small><span>{ledger.people[x.id]} people</span></div>
-      ))}</div>
-      <p className="honest">The councils go live with the contract.</p>
+      <div className="eyebrow">Emberfall · the hall of the Ashen Throne{live ? ' · on NEAR testnet' : ''}</div>
+      <h2>Season {season} of the Ashen Throne</h2>
+      <p className="lede">When a season ends, the house with the most favour takes the throne, and the crown pool goes to the players who won it that favour, each by their own share. Favour comes from rounds played in the halls, and more from rounds won.</p>
+      {live ? (
+        <dl className="stats">
+          <div><dt>Season</dt><dd>{clock}</dd></div>
+          <div><dt>Crown pool</dt><dd>{units(realm!.pool).toFixed(4)} NEAR</dd></div>
+        </dl>
+      ) : null}
+      {live && left <= 0 && (
+        <div className="go-row"><button className="go" disabled={busy || !!c.busy} onClick={() => void act(endSeason)}>Crown the house with the most favour</button></div>
+      )}
+      {live && past && (
+        <div className="throne-past">
+          <b>Season {past.season}: {past.crowned === null ? 'nobody earned favour, so nobody was crowned.' : `House ${HOUSES[past.crowned].name} took the throne, with a pool of ${units(past.pool).toFixed(4)} NEAR.`}</b>
+          {past.crowned !== null && (past.claimed
+            ? <span>You took your share: {share.toFixed(4)} NEAR.</span>
+            : share > 0
+              ? <button className="go" disabled={busy || !!c.busy} onClick={() => void act(() => claimCrown(past.season, share))}>Take your share: {share.toFixed(4)} NEAR</button>
+              : <span>You earned no favour with House {HOUSES[past.crowned].name} that season, so there is no share for you.</span>)}
+        </div>
+      )}
+      <div className="list throne-list">{order.map((h) => {
+        const x = HOUSES[h], mine = live ? units(c.me?.houses[h]?.favour) : 0;
+        return (
+          <div key={h} className="item flat throne-row" style={{ ['--c' as string]: x.colors[0] }}>
+            <b>House {x.name}</b><small>{fmt(fav(h))} favour{mine > 0 ? ` · ${fmt(mine)} of it yours` : ''}</small>
+            <i style={{ width: `${(fav(h) / top) * 100}%` }} />
+          </div>
+        );
+      })}</div>
+      {live
+        ? <p className="honest">Read from <a href={`${EXPLORER}/address/${CONTRACT}`} target="_blank" rel="noreferrer">{CONTRACT}</a>. Anyone can crown the house once the season is over (<code>end_season</code>); each player takes their own share (<code>claim_crown</code>).</p>
+        : <p className="honest">This is your practice favour, kept in this browser. <button className="link" onClick={() => void connect()}>Play on NEAR testnet</button> to see the real season and its crown pool.</p>}
     </>
   );
 }

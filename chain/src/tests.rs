@@ -269,6 +269,14 @@ fn the_crown_goes_to_the_house_with_most_favour() {
     ctx("ana.testnet", 0, 1000 + 3601);
     let s = r.get_season(1).unwrap();
     assert_eq!(s.pool.0, pool);
+    // The view says what the claim will pay: all of it to Ana, nothing to Bob (he played for another house).
+    assert!(r.get_crown(0, "ana.testnet".parse().unwrap()).is_none());
+    let c = r.get_crown(1, "ana.testnet".parse().unwrap()).unwrap();
+    assert_eq!(c["crowned"], 4);
+    assert_eq!(c["share"], pool.to_string());
+    assert_eq!(c["claimed"], false);
+    assert_eq!(r.get_crown(1, "bob.testnet".parse().unwrap()).unwrap()["share"], "0");
     r.claim_crown(1);
     assert_eq!(r.seasons.get(0).unwrap().claimed.0, pool);
+    assert_eq!(r.get_crown(1, "ana.testnet".parse().unwrap()).unwrap()["claimed"], true);
 }

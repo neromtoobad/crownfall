@@ -52,6 +52,7 @@ You need a NEAR **testnet** account with about 2 testnet NEAR. If you don't have
 | **8.** Drive to the Mumtaz Hippodrome (**H** on the radar). At the stables press **E** (**Race**), then **Watch and bet on NEAR**. While the teams parade, choose a stake and press **Back** on one | Your wallet confirms `bet` in NEAR. In the first 40 seconds of the run, **Crack the whip** burns 200 of that team's coin through the game key (`whip`). |
 | **9.** Watch to the line | The card reads **Settled on NEAR**: `settle` re-ran the race inside the contract ([`sim.rs`](chain/src/sim.rs)) and got the same finish you watched. A winning ticket shows **Collect** (`claim_race`). |
 | **10.** Press **J** for the Seal Book and follow the objective line to the Wardens | Each trial you finish writes a seal to your account with `seal`; the contract checks the ones it can see (coin bought, hall wins). |
+| **11.** Enter the hall of the Ashen Throne (**♛** on the radar) | Every house ranked by this season's favour (yours is marked), the season clock and the crown pool, all read from the contract. |
 
 **Check the chain directly.** These read-only calls need no account:
 
@@ -60,13 +61,11 @@ near contract call-function as-read-only crownfall-vael.testnet get_realm json-a
 near contract call-function as-read-only crownfall-vael.testnet get_account json-args '{"account":"YOUR_ACCOUNT.testnet"}' network-config testnet now
 ```
 
-**Seasons.** A season lasts 24 hours on the contract clock, but it only rolls over when someone calls `end_season`;
-the game doesn't call it for you yet. After the season's end time (`season_ends_ns` in `get_realm`), anyone can crown
-the house with the most favour, and that house's players can then take their share of the crown pool:
-
-```bash
-near contract call-function as-transaction crownfall-vael.testnet end_season json-args {} prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as YOUR_ACCOUNT.testnet network-config testnet sign-with-keychain send
-```
+**Seasons.** A season lasts 24 hours on the contract clock. Enter the hall of the Ashen Throne in the capital (**♛**
+on the radar, **E**: **Enter**) to see this season's favour by house, the time left and the crown pool. Once the time is
+up, anyone there can press **Crown the house with the most favour** (`end_season`), and the next time you come in, the
+last season's result is at the top with **Take your share** (`claim_crown`) if you played for the crowned house. What
+you'd be paid is read first with `get_crown`, so the button shows the exact amount.
 
 **No wallet?** Press **Practice without a wallet** in the seat picker: everything plays on a practice purse kept in
 your browser, and nothing goes on chain.
@@ -265,7 +264,7 @@ plus the doubled bonus once per account. Race results and every other payout are
 | `settle(race)` / `claim_race(race)` | game key | Run the race on chain; collect a winning ticket |
 | `end_season()` / `claim_crown(season)` | game key | Crown a house; take your share of the pool |
 
-Views: `get_realm`, `get_account`, `get_race`, `get_ticket`, `get_season`, `quote_buy`, `quote_sell`, `preview_race`.
+Views: `get_realm`, `get_account`, `get_race`, `get_ticket`, `get_season`, `get_crown`, `quote_buy`, `quote_sell`, `preview_race`.
 
 ## Built with
 

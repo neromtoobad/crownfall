@@ -592,6 +592,23 @@ impl Realm {
         season.checked_sub(1).and_then(|i| self.seasons.get(i)).cloned()
     }
 
+    /// What `claim_crown(season)` would pay this account: the crowned house, the pool, the house's winning favour, your
+    /// favour with it that season, your share, and whether you've taken it. None until the season has ended.
+    pub fn get_crown(&self, season: u32, account: AccountId) -> Option<Value> {
+        let s = season.checked_sub(1).and_then(|i| self.seasons.get(i)).cloned()?;
+        let (mine, claimed) = match s.crowned {
+            Some(house) => {
+                let hold = self.holding(house, &account);
+                let mine = if hold.fav_season == season { hold.favour } else if hold.prev_season == season { hold.prev_favour } else { 0 };
+                (mine, hold.claimed_season >= season)
+            }
+            None => (0, false),
+        };
+        let share = if s.favour.0 > 0 { mul_div(s.pool.0, mine, s.favour.0) } else { 0 };
+        Some(json!({"season": season, "crowned": s.crowned, "pool": s.pool, "favour": s.favour, "mine": U128(mine),
+                    "share": U128(share), "claimed": claimed, "ended_ns": U128(s.ended_ns as u128)}))
+    }
+
     pub fn quote_buy(&self, house: u8, near: U128) -> U128 {
         let g = &self.houses[self.house_idx(house)];
         U128(mul_div(near.0 - near.0 * FEE_BPS / 10_000, g.supply, g.reserve))

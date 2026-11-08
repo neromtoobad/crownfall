@@ -1,7 +1,7 @@
 // What the game asks of the purse, on chain when a wallet is connected and on the practice purse otherwise.
 import { HOUSES } from '../realm/layout.ts';
 import { buy as practiceBuy, fmt, ledger, note, priceAt, sell as practiceSell } from '../realm/ledger.ts';
-import { chain, keyCall, onChain, priceOf, units, walletCall, yocto } from './near.ts';
+import { chain, keyCall, onChain, priceOf, units, view, walletCall, yocto } from './near.ts';
 
 export const held = (h: number) => (onChain() ? units(chain.me?.houses[h]?.coins) : ledger.held[h]);
 export const price = (h: number) => {
@@ -46,4 +46,23 @@ export async function finishHall(round: number, won: boolean, grade: number) {
 export async function takeSeal(i: number) {
   if (!onChain()) return false;
   try { await keyCall('Sealing it on NEAR', 'seal', { seal: i }, true); return true; } catch { return false; }
+}
+
+// ---------- The Ashen Throne: seasons ----------
+
+export interface Crown { season: number; crowned: number | null; pool: string; favour: string; mine: string; share: string; claimed: boolean; ended_ns: string }
+/** What a finished season paid out, and what's yours (null while the season is still running). */
+export const crownOf = (season: number, account: string) => view<Crown | null>('get_crown', { season, account });
+
+/** End the season once it's due: the house with the most favour takes the throne. Anyone can call it. */
+export async function endSeason(): Promise<number | null> {
+  const h = await keyCall<number | null>('Crowning the house with the most favour', 'end_season', {});
+  note(h === null || h === undefined ? 'The season ended with no favour earned: nobody was crowned.' : `House ${HOUSES[h].name} took the Ashen Throne, on NEAR.`, h ?? undefined);
+  return h ?? null;
+}
+
+/** Take your share of a crowned season's pool (sent to your account as NEAR). */
+export async function claimCrown(season: number, near: number) {
+  await keyCall(`Taking your share of the crown pool: ${near.toFixed(4)} NEAR`, 'claim_crown', { season });
+  note(`Took ${near.toFixed(4)} NEAR from the crown pool of season ${season}, on NEAR.`);
 }
