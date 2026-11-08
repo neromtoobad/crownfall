@@ -30,16 +30,39 @@ const mix = (a: number, b: number, t: number) => a + (b - a) * t;
 
 // The river as a dense polyline, for distance checks.
 const riverPts = RIVER.getSpacedPoints(500).map((p) => [p.x, p.z] as [number, number]);
-export function riverDist(x: number, z: number) {
-  let best = 1e9;
-  for (let i = 0; i < riverPts.length - 1; i++) {
-    const [ax, az] = riverPts[i], [bx, bz] = riverPts[i + 1];
-    const dx = bx - ax, dz = bz - az;
-    const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz)));
-    const ex = ax + dx * t - x, ez = az + dz * t - z;
-    const d = ex * ex + ez * ez;
-    if (d < best) best = d;
+// Distance to the river, capped at RIVER_CAP: every use only cares about the first 160 m (the valley's slope ends
+// there), so beyond the cap the answer is just "far". Each cell of a coarse grid keeps the few segments that can be
+// within the cap of any point in it, so a check looks at a handful of segments instead of all 500 (checking all of
+// them cost seconds of load time on a phone: the height grid alone asks 260,000 times). Within the cap it's exact.
+export const RIVER_CAP = 170;
+const RC = 30, RHALF = Math.ceil((SIZE * 0.65) / RC), RW = RHALF * 2;
+function segDist2(s: number, x: number, z: number) {
+  const [ax, az] = riverPts[s], [bx, bz] = riverPts[s + 1];
+  const dx = bx - ax, dz = bz - az;
+  const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz)));
+  const ex = ax + dx * t - x, ez = az + dz * t - z;
+  return ex * ex + ez * ez;
+}
+const riverCells: (Int16Array | undefined)[] = new Array(RW * RW);
+{
+  // Each segment visits only the cells within reach of its bounding box.
+  const reach = RIVER_CAP + RC * Math.SQRT1_2 + 1, reach2 = reach * reach, lists: number[][] = [];
+  for (let s = 0; s < riverPts.length - 1; s++) {
+    const [ax, az] = riverPts[s], [bx, bz] = riverPts[s + 1];
+    const i0 = Math.max(0, Math.floor((Math.min(ax, bx) - reach) / RC) + RHALF), i1 = Math.min(RW - 1, Math.floor((Math.max(ax, bx) + reach) / RC) + RHALF);
+    const j0 = Math.max(0, Math.floor((Math.min(az, bz) - reach) / RC) + RHALF), j1 = Math.min(RW - 1, Math.floor((Math.max(az, bz) + reach) / RC) + RHALF);
+    for (let i = i0; i <= i1; i++)
+      for (let j = j0; j <= j1; j++)
+        if (segDist2(s, (i - RHALF + 0.5) * RC, (j - RHALF + 0.5) * RC) <= reach2) (lists[i * RW + j] ??= []).push(s);
   }
+  lists.forEach((l, k) => { if (l) riverCells[k] = Int16Array.from(l); });
+}
+export function riverDist(x: number, z: number) {
+  const i = Math.floor(x / RC) + RHALF, j = Math.floor(z / RC) + RHALF;
+  const list = i >= 0 && j >= 0 && i < RW && j < RW ? riverCells[i * RW + j] : undefined;
+  if (!list) return RIVER_CAP;
+  let best = RIVER_CAP * RIVER_CAP;
+  for (let k = 0; k < list.length; k++) { const d = segDist2(list[k], x, z); if (d < best) best = d; }
   return Math.sqrt(best);
 }
 

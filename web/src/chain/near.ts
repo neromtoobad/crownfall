@@ -5,8 +5,10 @@
 // - Everything else (entering a hall round, finishing it, taking a seal, whipping, settling a race) is signed here with
 //   a game key: a function-call key the wallet adds once, limited to this contract and to those methods, with a 0.5 NEAR
 //   gas allowance. It can't move the player's NEAR anywhere except back to them (`sell`).
-import { NearConnector } from '@hot-labs/near-connect';
-import { Account, KeyPair, type KeyPairString } from 'near-api-js';
+import type { NearConnector } from '@hot-labs/near-connect';
+import type { KeyPairString } from 'near-api-js';
+// The wallet libraries are big; they load on first use (a connect, a restore, a signed call), not with the realm.
+const nearApi = () => import('near-api-js');
 import { useSyncExternalStore } from 'react';
 
 export const CONTRACT = (import.meta.env.VITE_CONTRACT as string | undefined) ?? 'crownfall-vael.testnet';
@@ -93,7 +95,9 @@ export function refresh() {
 // ---------- The wallet ----------
 
 let connector: NearConnector | undefined;
-function getConnector() {
+async function getConnector() {
+  if (connector) return connector;
+  const { NearConnector } = await import('@hot-labs/near-connect');
   if (connector) return connector;
   connector = new NearConnector({ network: NETWORK, features: { signAndSendTransaction: true, testnet: true }, providers: { testnet: RPCS } });
   connector.on('wallet:signIn', (t) => { void signedIn(t.accounts[0]?.accountId); });
@@ -110,17 +114,17 @@ async function signedIn(account: string | undefined) {
 /** Pick a wallet and sign in. */
 export async function connect() {
   chain.error = '';
-  try { await getConnector().connect(); } catch (e) { chain.error = message(e); emitChain(); }
+  try { await (await getConnector()).connect(); } catch (e) { chain.error = message(e); emitChain(); }
 }
 export async function disconnect() {
-  try { await getConnector().disconnect(); } catch { /* already out */ }
+  try { await (await getConnector()).disconnect(); } catch { /* already out */ }
   chain.account = undefined; chain.keyed = false; chain.me = undefined; emitChain();
 }
 /** A wallet signed in on an earlier visit comes back on its own. */
 export async function restore() {
   void refresh();
   try {
-    const { accounts } = await getConnector().getConnectedWallet();
+    const { accounts } = await (await getConnector()).getConnectedWallet();
     await signedIn(accounts[0]?.accountId);
   } catch { /* nobody signed in */ }
 }
@@ -147,12 +151,13 @@ export async function walletCall<T>(what: string, method: string, args: Record<s
   chain.busy = what; chain.error = ''; emitChain();
   try {
     if (import.meta.env.DEV && devKey) {
+      const { Account } = await nearApi();
       const v = await new Account(chain.account, RPCS[0], devKey).callFunction<T & object>({ contractId: CONTRACT, methodName: method, args, gas: BigInt(GAS), deposit: yocto(near) });
       chain.lastTx = { what, t: Date.now() };
       void refresh();
       return v as T;
     }
-    const wallet = await getConnector().wallet();
+    const wallet = await (await getConnector()).wallet();
     const out = await wallet.signAndSendTransaction({
       receiverId: CONTRACT,
       actions: [{ type: 'FunctionCall', params: { methodName: method, args, gas: GAS, deposit: yocto(near).toString() } }],
@@ -175,6 +180,7 @@ export async function ensureKey() {
   if (!a) throw new Error('connect a wallet first');
   const have = storedKey(a);
   if (have) {
+    const { KeyPair } = await nearApi();
     const kp = KeyPair.fromString(have);
     try {
       await rpc('query', { request_type: 'view_access_key', finality: 'optimistic', account_id: a, public_key: kp.getPublicKey().toString() });
@@ -182,10 +188,11 @@ export async function ensureKey() {
       return;
     } catch { /* the key was removed: make a new one */ }
   }
+  const { KeyPair } = await nearApi();
   const kp = KeyPair.fromRandom('ed25519');
   chain.busy = 'Approve the game key in your wallet (once)'; emitChain();
   try {
-    const wallet = await getConnector().wallet();
+    const wallet = await (await getConnector()).wallet();
     await wallet.signAndSendTransaction({
       receiverId: a,
       actions: [{ type: 'AddKey', params: { publicKey: kp.getPublicKey().toString(), accessKey: { permission: { receiverId: CONTRACT, allowance: yocto(0.5).toString(), methodNames: KEY_METHODS } } } }],
@@ -201,6 +208,7 @@ export async function keyCall<T>(what: string, method: string, args: Record<stri
   const a = chain.account!, sk = storedKey(a)!;
   if (!quiet) { chain.busy = what; chain.error = ''; emitChain(); }
   try {
+    const { Account } = await nearApi();
     const acct = new Account(a, RPCS[0], sk);
     const v = await acct.callFunction<T & object>({ contractId: CONTRACT, methodName: method, args, gas: BigInt(GAS) });
     chain.lastTx = { what, t: Date.now() };

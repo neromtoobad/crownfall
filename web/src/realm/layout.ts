@@ -108,8 +108,21 @@ export function roadDist(x: number, z: number) {
   for (const [rx, rz] of roadPts!) { const d = (rx - x) * (rx - x) + (rz - z) * (rz - z); if (d < best) best = d; }
   return Math.sqrt(best);
 }
+// The road samples bucketed in a coarse grid: placing trees, grass and stalls asks this tens of thousands of times,
+// and each ask only needs the cells within `d`. Same answer as checking every sample.
+const RG = 24;
+let roadCells: Map<number, number[]> | undefined;
 export function nearRoad(x: number, z: number, d: number) {
   roadPts ??= ROADS.flatMap((r) => { const c = roadCurve(r); return c.getSpacedPoints(Math.ceil(c.getLength() / 3)); }).map((p) => [p.x, p.z]);
-  const d2 = d * d;
-  return roadPts.some(([rx, rz]) => (rx - x) * (rx - x) + (rz - z) * (rz - z) < d2);
+  if (!roadCells) {
+    roadCells = new Map();
+    for (const [rx, rz] of roadPts) { const k = Math.floor(rx / RG) * 4096 + Math.floor(rz / RG); const l = roadCells.get(k); if (l) l.push(rx, rz); else roadCells.set(k, [rx, rz]); }
+  }
+  const d2 = d * d, r = Math.ceil(d / RG), ci = Math.floor(x / RG), cj = Math.floor(z / RG);
+  for (let i = ci - r; i <= ci + r; i++)
+    for (let j = cj - r; j <= cj + r; j++) {
+      const l = roadCells.get(i * 4096 + j);
+      if (l) for (let n = 0; n < l.length; n += 2) { const ex = l[n] - x, ez = l[n + 1] - z; if (ex * ex + ez * ez < d2) return true; }
+    }
+  return false;
 }

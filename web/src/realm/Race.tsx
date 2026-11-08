@@ -316,7 +316,8 @@ function Teams() {
   const woods = useRef<THREE.InstancedMesh>(null), paints = useRef<THREE.InstancedMesh>(null), wheels = useRef<THREE.InstancedMesh>(null);
 
   // Each house's lord drives their own chariot.
-  const lords = useGLTF(HOUSES.map((h) => `/models/${h.lord}.glb`)) as unknown as { scene: THREE.Object3D; animations: THREE.AnimationClip[] }[];
+  // One call per lord (a fixed eight), so each shares the cache with the lord walking at their seat.
+  const lords = HOUSES.map((h) => useGLTF(`/models/${h.lord}.glb`)) as unknown as { scene: THREE.Object3D; animations: THREE.AnimationClip[] }[]; // eslint-disable-line react-hooks/rules-of-hooks
   const drivers = useMemo(() => lords.map((g) => {
     const ob = cloneSkinned(g.scene);
     ob.scale.setScalar(2.1);

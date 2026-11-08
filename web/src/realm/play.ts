@@ -64,6 +64,7 @@ export function usePlay() {
 }
 
 export function takeSeat(seat: Seat) {
+  goLandscape();
   play.seat = seat;
   try { localStorage.setItem('crownfall.seat', JSON.stringify(seat)); } catch { /* private window */ }
   play.picking = false;
@@ -76,6 +77,7 @@ export function practise() { practising = true; }
 /** Whether a wallet is connected, set by the chain module (play.ts doesn't import it). */
 export const wallet = { connected: () => false };
 export function setMode(mode: 'map' | 'play') {
+  if (mode === 'play') goLandscape();
   // Wallet first: entering without one opens the seat picker on its wallet step.
   if (mode === 'play' && (!play.seat || (!wallet.connected() && !practising))) { play.picking = true; emitPlay(); return; }
   play.mode = mode;
@@ -116,3 +118,26 @@ export function press(k: string) { pressed.push(k); }
 /** The touch joystick: x right, y forward, each −1…1. */
 export const stick = { x: 0, y: 0, active: false };
 export const TOUCH = typeof window !== 'undefined' && (new URLSearchParams(location.search).has('touch') || matchMedia('(pointer: coarse)').matches);
+/** Lighter rendering: phones and tablets, or ?low. Lower resolution, smaller shadows, no post effects, fewer people. */
+export const LOW = typeof window !== 'undefined' && (TOUCH || new URLSearchParams(location.search).has('low'));
+
+if (typeof document !== 'undefined' && TOUCH) document.documentElement.classList.add('touch');
+
+/** On a phone: go full screen and hold landscape (Android Chrome honours both; iOS has neither for pages, so there
+ *  the rotate screen asks instead). Needs a tap, so it's called from the buttons that take you into the realm. */
+export function goLandscape() {
+  if (!TOUCH) return;
+  const el = document.documentElement as HTMLElement & { webkitRequestFullscreen?: () => void };
+  const lock = () => (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> })?.lock?.('landscape').catch(() => {});
+  try {
+    if (document.fullscreenElement) { void lock(); return; }
+    const fs = el.requestFullscreen ? el.requestFullscreen({ navigationUI: 'hide' }) : (el.webkitRequestFullscreen?.(), undefined);
+    Promise.resolve(fs).then(lock).catch(() => {});
+  } catch { /* not allowed here */ }
+}
+
+/** The realm is ready to show: the land is in, even if people are still arriving. Drives the loading screen. */
+export const boot = { ready: false };
+const bootSubs = new Set<() => void>();
+export function markReady() { if (boot.ready) return; boot.ready = true; bootSubs.forEach((f) => f()); }
+export function useBoot() { return useSyncExternalStore((f) => { bootSubs.add(f); return () => bootSubs.delete(f); }, () => boot.ready); }

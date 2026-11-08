@@ -29,7 +29,7 @@ export function PlayHud() {
       {p.mode === 'play' && p.seat && !p.picking && (
         <>
           {p.racing && <DriveHud />}
-          {!p.racing && !p.game && p.inside < 0 && <Radar size={TOUCH ? 150 : 210} />}
+          {!p.racing && !p.game && p.inside < 0 && <Radar size={TOUCH ? 108 : 210} />}
           <Status />
           {!p.game && !p.racing && <ChainBar />}
           <AreaName />

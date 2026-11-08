@@ -11,7 +11,9 @@ import { PlayerWorld } from './realm/Player.tsx';
 import { Outdoors } from './realm/Realm.tsx';
 import { StoryWorld } from './realm/Story.tsx';
 import { PlayHud } from './PlayHud.tsx';
-import { setMode, usePlay } from './realm/play.ts';
+import { LOW, setMode, useBoot, usePlay } from './realm/play.ts';
+import { Loader } from './Loader.tsx';
+import { Rotate } from './Rotate.tsx';
 import { ledger } from './realm/ledger.ts';
 import { startChain } from './chain/ChainBar.tsx';
 import { useChain } from './chain/near.ts';
@@ -37,25 +39,30 @@ function Game() {
   const watching = useRace().watch;
   const mode = usePlay().mode;
   const account = useChain().account;
+  const ready = useBoot();
   useEffect(() => { startChain(); }, []);
   const h = typeof picked === 'number' && !watching && mode === 'map' ? HOUSES[picked] : undefined;
   return (
     <div className="app">
       <Realm focus={focus} onPick={pick}>
         <Outdoors>
-        <Travellers url="/models/peasant-m.glb" count={22} followable />
-        <Travellers url="/models/peasant-f.glb" count={18} />
-        <Travellers url="/models/soldier.glb" count={8} />
-        {HOUSES.map((h) => <Promenade key={h.id} house={h.id} url={`/models/${h.lord}.glb`} />)}
-        <March url="/models/soldier.glb" order={DEMO_MARCH} ranks={8} />
-        {ledger.marches.map((m) => <March key={m.id} url="/models/soldier.glb" order={m} ranks={6} />)}
-        <Arena />
+        {ready && <>
+        <Suspense fallback={null}><Arena /></Suspense>
+        <Suspense fallback={null}><Travellers url="/models/peasant-m.glb" count={LOW ? 9 : 22} followable /></Suspense>
+        <Suspense fallback={null}><Travellers url="/models/peasant-f.glb" count={LOW ? 7 : 18} /></Suspense>
+        <Suspense fallback={null}><Travellers url="/models/soldier.glb" count={LOW ? 3 : 8} /></Suspense>
+        {HOUSES.map((h) => <Suspense key={h.id} fallback={null}><Promenade house={h.id} url={`/models/${h.lord}.glb`} /></Suspense>)}
+        <Suspense fallback={null}><March url="/models/soldier.glb" order={DEMO_MARCH} ranks={LOW ? 4 : 8} /></Suspense>
+        {ledger.marches.map((m) => <Suspense key={m.id} fallback={null}><March url="/models/soldier.glb" order={m} ranks={LOW ? 3 : 6} /></Suspense>)}
+        </>}
         </Outdoors>
-        <PlayerWorld />
-        <StoryWorld />
+        {ready && <Suspense fallback={null}><PlayerWorld /></Suspense>}
+        {ready && <Suspense fallback={null}><StoryWorld /></Suspense>}
       </Realm>
       {mode === 'map' && <RaceHud />}
       <PlayHud />
+      <Loader />
+      <Rotate />
       {mode !== 'play' && <header className="top">
         <div className="mark">Crownfall</div>
         <div className="sub">The realm of Vael · eight houses · one Ashen Throne</div>

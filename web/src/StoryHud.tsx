@@ -8,7 +8,7 @@ import { fmt, lastPay, ledger } from './realm/ledger.ts';
 import { held } from './chain/game.ts';
 import { chain, onChain, useChain } from './chain/near.ts';
 import { SEALS, abandon, current, nextHint, nextLine, story, timeLeft } from './realm/missions.ts';
-import { TOUCH, me, play, usePlay } from './realm/play.ts';
+import { TOUCH, me, play, usePlay, press } from './realm/play.ts';
 import { MARKER } from './realm/Story.tsx';
 import { NearMark } from './NearMark.tsx';
 import { bark } from './realm/barks.ts';
@@ -231,7 +231,7 @@ export function SealBar() {
   if (p.racing || p.game || story.talk) return null;
   const have = story.saved.seals;
   return (
-    <div className="sealbar" title="Press J for the Seal Book">
+    <div className="sealbar" title="Press J for the Seal Book" onPointerDown={TOUCH ? (e) => { e.stopPropagation(); press('j'); } : undefined}>
       {SEALS.map((s) => <i key={s} className={have.includes(s) ? 'on' : ''} title={`Seal of the ${s}`}><SealGlyph seal={s} size={18} /></i>)}
       <span>{have.length} / 7 seals · <kbd>J</kbd></span>
     </div>

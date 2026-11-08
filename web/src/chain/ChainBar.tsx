@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { NearMark } from '../NearMark.tsx';
 import { CONTRACT, EXPLORER, chain, connect, disconnect, onChain, refresh, restore, useChain } from './near.ts';
 import { startRacePolling } from './races.ts';
-import { wallet } from '../realm/play.ts';
+import { TOUCH, wallet } from '../realm/play.ts';
 
 let started = false;
 /** Bring back a wallet signed in on an earlier visit, and start following the races. Safe to call more than once. */
@@ -32,7 +32,7 @@ export function ChainBar() {
           <button onClick={() => void disconnect()} aria-label="Sign out">×</button>
         </div>
       ) : (
-        <button className="connect practice" onClick={() => void connect()}><span className="tag">Practice</span><NearMark size={13} />Connect wallet to play on NEAR</button>
+        <button className="connect practice" onClick={() => void connect()}><span className="tag">Practice</span><NearMark size={13} />{TOUCH ? 'Connect wallet' : 'Connect wallet to play on NEAR'}</button>
       )}
       {c.busy && <div className="busy"><i />{c.busy}…</div>}
       {!c.busy && c.error && <div className="err">{c.error}</div>}

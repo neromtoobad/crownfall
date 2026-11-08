@@ -2,7 +2,7 @@
 import { LIBRARY, hallHouse } from '../realm/rooms.ts';
 import { SealGlyph } from '../StoryHud.tsx';
 import { fmt, ledger } from '../realm/ledger.ts';
-import { usePlay } from '../realm/play.ts';
+import { TOUCH, usePlay } from '../realm/play.ts';
 import { beginRound, gameDef, libDoubles, quitGame, session } from './host.ts';
 import { sigilURL } from '../realm/sigils.ts';
 import { useMemo } from 'react';
@@ -22,12 +22,12 @@ export function GameHud() {
   if (session.phase === 'play') return (
     <>
       {def.Hud && <def.Hud />}
-      <div className="game-esc"><kbd>Esc</kbd> leave the table</div>
+      {!TOUCH && <div className="game-esc"><kbd>Esc</kbd> leave the table</div>}
       {session.leaving > performance.now() && (
         <div className="game-leave" style={style}>
           <b>Leave the table?</b>
           <span>{lib ? (session.staked > 0 ? `The round counts as lost and your ${session.staked} NEAR stake goes to the crown pool${live ? ', on NEAR' : ''}.` : 'The game counts as lost.') : `The round counts as lost. The ${fmt(def.entry)} $${h.coin} is already burned${live ? ' on NEAR' : ''}.`}</span>
-          <span className="leave-keys"><kbd>Esc</kbd> again to leave · any other key to keep playing</span>
+          {TOUCH ? <span className="leave-keys">Tap Leave again to go · Keep playing to stay</span> : <span className="leave-keys"><kbd>Esc</kbd> again to leave · any other key to keep playing</span>}
         </div>
       )}
     </>

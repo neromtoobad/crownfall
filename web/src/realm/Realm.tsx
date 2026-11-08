@@ -1,11 +1,9 @@
 // The whole realm in one canvas: sky, light, land, water, forests, roads, castles, labels and the camera.
-import { Suspense, useEffect, useRef } from 'react';
+import { Suspense, lazy, useEffect, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Html, MapControls, Sky } from '@react-three/drei';
+import { Html, MapControls, Sky, useGLTF, useTexture } from '@react-three/drei';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import * as THREE from 'three';
-import { Bloom, BrightnessContrast, EffectComposer, HueSaturation, N8AO, SMAA, ToneMapping, Vignette } from '@react-three/postprocessing';
-import { ToneMappingMode } from 'postprocessing';
 import type { MapControls as MapControlsImpl } from 'three-stdlib';
 import { Terrain, Water } from './Terrain.tsx';
 import { Forest } from './Forest.tsx';
@@ -20,7 +18,19 @@ import { Birds } from './Birds.tsx';
 import { Smoke } from './Smoke.tsx';
 import { tickWind } from './wind.ts';
 import { tickAmbience } from './ambience.ts';
-import { me, play, usePlay } from './play.ts';
+import { LOW, markReady, me, play, usePlay } from './play.ts';
+
+// Models are Draco-compressed; the decoder is served from this site (public/draco), not a CDN.
+useGLTF.setDecoderPath('/draco/');
+// The land, all requested at once: otherwise each part only asks for its files once the part before it has loaded.
+['grass', 'dirt', 'rock', 'wheat', 'sand', 'marsh'].forEach((n) => useTexture.preload(`/tex/${n}.jpg`));
+['keep', 'throne-hall', 'tower', 'wall', 'townhouse', 'cottage'].forEach((n) => useGLTF.preload(`/env/${n}.glb`));
+
+// The post effects (and their library) load only where they're used: not on phones.
+const PostFX = lazy(() => import('./PostFX.tsx'));
+
+/** Mounts once the land's boundary has resolved: the loading screen can lift. */
+function Ready() { useEffect(() => { markReady(); }, []); return null; }
 import { DEBUG_COLLIDE, DebugCollide } from './DebugCollide.tsx';
 import { HallWorld } from './Hall.tsx';
 import { KeepDoors } from './KeepDoors.tsx';
@@ -39,7 +49,7 @@ export interface Focus { x: number; z: number; dist: number }
 
 export function Realm({ focus, onPick, children }: { focus?: Focus; onPick: (house: number | 'capital') => void; children?: React.ReactNode }) {
   return (
-    <Canvas shadows dpr={[1, 1.5]} camera={{ fov: 42, near: 1, far: 6000, position: START.pos }} gl={{ antialias: false, stencil: false, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.0 }}>
+    <Canvas shadows dpr={LOW ? [1, 1.25] : [1, 1.5]} camera={{ fov: 42, near: 1, far: 6000, position: START.pos }} gl={{ antialias: false, stencil: false, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.0 }}>
       <color attach="background" args={['#c9b79a']} />
       <Haze />
       <Outdoors><Sky sunPosition={SUN.clone().multiplyScalar(1000)} turbidity={4.5} rayleigh={2.2} mieCoefficient={0.004} mieDirectionalG={0.86} /></Outdoors>
@@ -50,24 +60,18 @@ export function Realm({ focus, onPick, children }: { focus?: Focus; onPick: (hou
       <WindClock />
       <SoftFill />
       <Suspense fallback={null}><HallWorld /><GameStage /><KeepDoors /></Suspense>
-      <Suspense fallback={null}>
-       <Outdoors>
-        <Terrain />
-        <Water />
-        <Forest />
-        <Roads />
-        <Buildings />
-        <Market />
-        <Grass />
-        <Birds />
-        <Smoke />
+      {/* Each part of the land arrives on its own, so the realm shows as soon as the ground and keeps are in. */}
+      <Outdoors>
+        <Suspense fallback={null}><Terrain /><Water /><Roads /><Buildings /><Ready /></Suspense>
+        <Suspense fallback={null}><Forest /></Suspense>
+        <Suspense fallback={null}><Market /></Suspense>
+        <Suspense fallback={null}><Grass /><Birds /><Smoke /></Suspense>
         {DEBUG_COLLIDE && <DebugCollide />}
-       </Outdoors>
-      </Suspense>
+      </Outdoors>
       <Suspense fallback={null}>{children}</Suspense>
       <Labels onPick={onPick} />
       <Camera focus={focus} />
-      <PostFX />
+      {!LOW && <Suspense fallback={null}><PostFX /></Suspense>}
     </Canvas>
   );
 }
@@ -110,7 +114,7 @@ function Sunlight() {
     const cam = l.shadow.camera;
     if (Math.abs(cam.right - span) > 5) { cam.left = -span; cam.right = span; cam.top = span; cam.bottom = -span; cam.updateProjectionMatrix(); }
   });
-  return <directionalLight ref={light} color="#ffd29a" intensity={3.3} castShadow shadow-mapSize={[4096, 4096]} shadow-bias={-0.0004} shadow-normalBias={0.6} shadow-camera-far={3000} />;
+  return <directionalLight ref={light} color="#ffd29a" intensity={3.3} castShadow shadow-mapSize={LOW ? [1536, 1536] : [4096, 4096]} shadow-bias={-0.0004} shadow-normalBias={0.6} shadow-camera-far={3000} />;
 }
 
 /** The realm's one wind (wind.ts) and the sound of where you stand (ambience.ts), wound on with the frame clock. */
@@ -221,21 +225,3 @@ function Haze() {
   return null;
 }
 
-/** One grade over everything, so generated buildings, hand-made props and rigged people read as one world.
- * Contact shadows (AO) where walls meet the ground, a whisper of bloom on the sun and gold, ACES, a little
- * contrast, a touch less saturation, a soft vignette, then SMAA. Each is subtle enough to need a toggle to notice. */
-function PostFX() {
-  const mode = usePlay().mode;
-  if (new URLSearchParams(location.search).has('nofx')) return null;
-  return (
-    <EffectComposer multisampling={0} enableNormalPass={false}>
-      {mode === 'play' ? <N8AO aoRadius={3.2} distanceFalloff={1.2} intensity={2.4} quality="medium" halfRes color="#1c2230" /> : <></>}
-      <Bloom luminanceThreshold={0.92} luminanceSmoothing={0.15} intensity={0.32} mipmapBlur />
-      <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
-      <HueSaturation saturation={-0.06} />
-      <BrightnessContrast contrast={0.07} brightness={0.01} />
-      <Vignette offset={0.32} darkness={0.42} />
-      <SMAA />
-    </EffectComposer>
-  );
-}

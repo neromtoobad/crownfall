@@ -443,3 +443,105 @@ button.item:hover:not(:disabled) { border-color: var(--gold); }
 .chainbar .connect.practice:hover { background: rgba(0, 60, 40, 0.9); }
 .chainbar .connect.practice .tag { font: 700 10px/1 var(--sans); letter-spacing: 0.08em; text-transform: uppercase; color: #1a130c; background: var(--gold); padding: 3px 6px; border-radius: 4px; }
 @media (max-width: 560px) { .wallet-step { grid-template-columns: auto 1fr; } .wallet-step .near-btn { grid-column: 1 / -1; } }
+
+/* Loading screen */
+.loader { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; background: radial-gradient(ellipse at 50% 40%, #2a1f15 0%, #120d09 70%); transition: opacity 0.7s ease; }
+.loader.out { opacity: 0; pointer-events: none; }
+.loader-in { display: grid; gap: 10px; justify-items: center; width: min(360px, 80vw); text-align: center; }
+.loader-mark { font: 700 clamp(30px, 6vw, 46px)/1 var(--display); letter-spacing: 0.08em; color: #f6e7c4; }
+.loader-sub { font: italic 16px/1.2 var(--serif); color: var(--ink-2, #cbbd9f); }
+.loader-bar { margin-top: 14px; width: 100%; height: 3px; border-radius: 3px; background: rgba(214, 178, 110, 0.18); overflow: hidden; }
+.loader-bar i { display: block; height: 100%; background: var(--gold); transition: width 0.4s ease; }
+.loader-line { font: 13px/1.2 var(--sans); color: var(--ink-2, #cbbd9f); letter-spacing: 0.02em; }
+
+/* Phones: hold it sideways. */
+.rotate { position: fixed; inset: 0; z-index: 100; display: grid; place-content: center; justify-items: center; gap: 14px; padding: 32px; text-align: center; background: #120d09; color: #f6e7c4; }
+.rotate b { font: 700 24px/1.2 var(--display); letter-spacing: 0.04em; }
+.rotate span { max-width: 300px; font: 15px/1.45 var(--serif); color: var(--ink-2, #cbbd9f); }
+.rotate button { margin-top: 6px; background: var(--gold); color: #1a130c; border: 0; border-radius: 8px; padding: 12px 20px; font: 700 15px/1 var(--sans); }
+.rotate-phone { width: 46px; height: 78px; border: 3px solid var(--gold); border-radius: 9px; position: relative; animation: rot 2.4s ease-in-out infinite; margin-bottom: 8px; }
+.rotate-phone i { position: absolute; left: 50%; bottom: 5px; width: 10px; height: 3px; margin-left: -5px; border-radius: 2px; background: var(--gold); }
+@keyframes rot { 0%, 25% { transform: rotate(0deg); } 55%, 85% { transform: rotate(-90deg); } 100% { transform: rotate(0deg); } }
+
+/* Touch layout (html.touch): stick bottom left, thumb buttons bottom right, map and wallet up top. */
+html.touch, html.touch body { overscroll-behavior: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+html.touch button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+html.touch .stick { z-index: 32; }
+html.touch .stick.rest { opacity: 0.55; }
+html.touch .stick span { position: absolute; bottom: -18px; font: 600 10px/1 var(--sans); letter-spacing: 0.08em; text-transform: uppercase; color: rgba(255, 255, 255, 0.7); }
+html.touch .touch-btns { right: 18px; bottom: 18px; grid-template-columns: repeat(3, 58px); grid-template-rows: 58px 58px; gap: 8px; align-items: end; }
+html.touch .touch-btns button { width: 58px; height: 58px; font-size: 11px; }
+html.touch .touch-btns button.big { grid-column: 3; grid-row: 1 / span 2; width: 76px; height: 76px; align-self: end; justify-self: end; }
+html.touch .radar { left: auto; right: 12px; bottom: auto; top: 86px; }
+html.touch .touch-pause { top: 12px; left: 12px; }
+html.touch .chainbar { left: 62px; top: 12px; }
+html.touch .chainbar .connect.practice { padding: 6px 10px; font-size: 12px; }
+html.touch .prompt { bottom: 22px; }
+html.touch .objective { top: 52px; font-size: 13px; padding: 6px 12px; }
+html.touch .tip { bottom: 110px; left: 50%; transform: translateX(-50%); width: min(420px, calc(100% - 300px)); }
+html.touch .bark { bottom: 96px; max-width: calc(100% - 320px); font-size: 14px; }
+
+/* Hall games on touch */
+.game-leave-btn, .game-stay-btn { z-index: 46; position: absolute; top: 12px; left: 12px; padding: 9px 14px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.35); background: rgba(14, 10, 7, 0.72); color: #f6e7c4; font: 600 13px/1 var(--sans); }
+.game-stay-btn { left: auto; right: 12px; top: auto; bottom: 40%; background: var(--gold); color: #1a130c; border: 0; z-index: 47; }
+.gpad { z-index: 44; position: absolute; bottom: 18px; display: flex; gap: 10px; align-items: flex-end; touch-action: none; }
+.gpad.left { left: 18px; flex-wrap: wrap; width: 140px; }
+.gpad.right { right: 18px; flex-direction: row-reverse; }
+.gpad button { min-width: 64px; height: 64px; padding: 0 10px; border-radius: 32px; border: 2px solid rgba(255, 255, 255, 0.35); background: rgba(18, 14, 11, 0.62); color: #fff; font: 700 13px/1.1 var(--sans); }
+.gpad button:active { background: rgba(255, 210, 63, 0.4); }
+.gpad button.big { min-width: 96px; height: 96px; border-radius: 48px; background: rgba(255, 210, 63, 0.88); color: #1a130c; border-color: #ffd23f; font-size: 14px; max-width: 130px; white-space: normal; }
+.gpad.left.dpad { display: grid; grid-template-columns: repeat(3, 56px); grid-template-rows: repeat(3, 56px); width: auto; gap: 4px; }
+.gpad.left.dpad button { min-width: 0; width: 56px; height: 56px; padding: 0; }
+.gpad.left.dpad button:nth-child(1) { grid-column: 2; grid-row: 1; }
+.gpad.left.dpad button:nth-child(2) { grid-column: 1; grid-row: 2; }
+.gpad.left.dpad button:nth-child(3) { grid-column: 3; grid-row: 2; }
+.gpad.left.dpad button:nth-child(4) { grid-column: 2; grid-row: 3; }
+.gpad.right.lamps { flex-direction: row; }
+.gpad.left.pairs { display: grid; grid-template-columns: repeat(2, auto); width: auto; gap: 10px; }
+.gpad.lamps button { min-width: 0; width: 62px; height: 62px; border-radius: 50%; color: #1a130c; font-size: 18px; }
+html.touch .game-hud .hint { display: none; }
+
+/* Short landscape screens (phones): compact landing, picker, cards and panels. */
+@media (max-height: 500px) {
+  .top { padding: 10px 14px; gap: 10px; align-items: center; }
+  .top .sub { display: none; }
+  .mark { font-size: 20px; }
+  .top-actions button { padding: 7px 12px; font-size: 12px; }
+  .scrim { padding: 8px; align-items: flex-start; }
+  .picker, .panel { max-height: calc(100% - 16px); padding: 14px 18px; gap: 6px; }
+  .picker h1, .panel h2 { font-size: 20px; }
+  .picker .houses { grid-template-columns: repeat(4, 1fr); }
+  .picker .houses button small { display: none; }
+  .wallet-step { padding: 10px 12px; gap: 10px; }
+  .wallet-step span { font-size: 13px; }
+  .game-card { max-height: calc(100% - 16px); overflow: auto; padding: 14px 18px; }
+  .game-card h2 { font-size: 24px; }
+  .game-card .sig { display: none; }
+  .game-card p { font-size: 14px; }
+  .game-card .keys { margin: 8px 0 2px; font-size: 13px; }
+  .game-card .entry { margin-top: 8px; padding: 6px 10px; }
+  /* Play stays in reach however long the card runs. */
+  .game-card .go { position: sticky; bottom: -14px; margin: 10px -18px -14px; padding: 10px 18px 12px; background: rgba(12, 9, 6, 0.97); }
+  .loader-mark { font-size: 30px; }
+}
+@media (max-height: 500px) {
+  .race-ticker { transform: scale(0.72); transform-origin: left bottom; }
+  .race-card { transform: scale(0.75); transform-origin: right top; }
+}
+@media (max-height: 500px) {
+  .picker .chips button { padding: 5px 10px; font-size: 12px; }
+  .picker .actions { position: sticky; bottom: -14px; margin: 4px -18px -14px; padding: 8px 18px 10px; background: rgba(20, 15, 11, 0.97); border-top: 1px solid var(--edge); }
+  .picker .row2 input { padding: 6px 9px; }
+}
+html.touch .sealbar { left: auto; right: 150px; transform: none; top: 12px; }
+html.touch .objective .meta.book { display: none; }
+/* Keyboard hints mean nothing on a phone: the pads say it. */
+html.touch .game-card .keys { display: none; }
+/* Liar's Dice on a phone: the bid panel moves left of the Bid and Liar buttons. */
+html.touch .game-hud.dice { right: 132px; top: 44%; padding: 12px 14px; width: min(340px, calc(100% - 330px)); }
+/* Hall HUDs on a phone sit between the two thumb pads, and shrink to fit above them. */
+html.touch .game-hud { max-width: calc(100vw - 360px); font-size: 14px; }
+html.touch .game-hud .line { font-size: 16px; }
+html.touch .game-hud.st-hud { min-width: 0; width: calc(100vw - 470px); padding: 8px 12px; left: calc(50% - 20px); }
+html.touch .st-board { transform: translateX(-50%) scale(0.62); transform-origin: top center; top: 6px; }
+html.touch .st-map { transform: scale(0.5); transform-origin: right top; top: 96px; right: 12px; }
