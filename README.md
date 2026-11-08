@@ -5,6 +5,7 @@
 <p align="center">
   <a href="https://crownfall.nerom.site"><b>Play it</b></a> ·
   <a href="https://testnet.nearblocks.io/address/crownfall-vael.testnet">Contract on NEAR testnet</a> ·
+  <a href="#for-judges-try-it-in-ten-minutes">Try it in ten minutes</a> ·
   <a href="#what-happens-on-near">How the chain side works</a> ·
   <a href="#run-it">Run it</a>
 </p>
@@ -31,6 +32,47 @@ moves the price.
     <td>Every keep has a hall you can walk into. This is House Draven's, at Stonedeep.</td>
   </tr>
 </table>
+
+## For judges: try it in ten minutes
+
+You need a NEAR **testnet** account with about 2 testnet NEAR. If you don't have one, make one in
+[MyNearWallet (testnet)](https://testnet.mynearwallet.com/) or Meteor, and top it up at
+[near-faucet.io](https://near-faucet.io/). Every call below is on testnet; you can watch them land on
+[`crownfall-vael.testnet`](https://testnet.nearblocks.io/address/crownfall-vael.testnet) as you go.
+
+| Do this | You'll see |
+|---|---|
+| **1.** Open https://crownfall.nerom.site | The realm of Vael from above: eight keeps, the capital, and a live race card bottom left. |
+| **2.** Press **Connect wallet & take your seat**, connect your wallet, pick a house, a lord and a name, press **Enter** | Your wallet asks once to add a game key: a function-call key limited to this contract with a 0.5 NEAR gas allowance. You land in the capital, Emberfall, with your account in the pill top left. |
+| **3.** Walk to the Mint just ahead (the counter with the big coin) and press **E**: **Trade** | The eight house coins with price, supply, reserve and coin burned, read from the contract. |
+| **4.** Pick a house's coin, type `0.1`, press **Buy with 0.1 NEAR** | Your wallet confirms `buy`. The coin lands in your purse (top right), and the pill top left shows **✓ … on NEAR**, linked to the transaction. |
+| **5.** Press **M** for the map and tap that house's keep to set a waypoint. Press **C** to whistle for your chariot and **E** to take the reins | The radar draws the road route to the keep. **W** to drive, **A**/**D** to steer, **Space** to whip. |
+| **6.** At the keep's lit door press **E** (**Enter**), walk to the table, press **E** (**Play**), then **Play** on the card | No wallet popup: the game key signs `enter`, which burns 400 of that house's coin. Back at the Mint, that coin's burned count has gone up, and its price with it. |
+| **7.** Play the round (each game shows its controls) | The result is reported with `finish`: favour with the house, more for a win. |
+| **8.** Drive to the Mumtaz Hippodrome (**H** on the radar). At the stables press **E** (**Race**), then **Watch and bet on NEAR**. While the teams parade, choose a stake and press **Back** on one | Your wallet confirms `bet` in NEAR. In the first 40 seconds of the run, **Crack the whip** burns 200 of that team's coin through the game key (`whip`). |
+| **9.** Watch to the line | The card reads **Settled on NEAR**: `settle` re-ran the race inside the contract ([`sim.rs`](chain/src/sim.rs)) and got the same finish you watched. A winning ticket shows **Collect** (`claim_race`). |
+| **10.** Press **J** for the Seal Book and follow the objective line to the Wardens | Each trial you finish writes a seal to your account with `seal`; the contract checks the ones it can see (coin bought, hall wins). |
+
+**Check the chain directly.** These read-only calls need no account:
+
+```bash
+near contract call-function as-read-only crownfall-vael.testnet get_realm json-args {} network-config testnet now
+near contract call-function as-read-only crownfall-vael.testnet get_account json-args '{"account":"YOUR_ACCOUNT.testnet"}' network-config testnet now
+```
+
+**Seasons.** A season lasts 24 hours on the contract clock, but it only rolls over when someone calls `end_season`;
+the game doesn't call it for you yet. After the season's end time (`season_ends_ns` in `get_realm`), anyone can crown
+the house with the most favour, and that house's players can then take their share of the crown pool:
+
+```bash
+near contract call-function as-transaction crownfall-vael.testnet end_season json-args {} prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as YOUR_ACCOUNT.testnet network-config testnet sign-with-keychain send
+```
+
+**No wallet?** Press **Practice without a wallet** in the seat picker: everything plays on a practice purse kept in
+your browser, and nothing goes on chain.
+
+**On a phone.** Turn it sideways. The left thumb is the joystick, drag on the right to look, and the buttons on the
+right are Use, Run, Chariot and Map. Each hall game has its own touch buttons.
 
 ## Hackathon tracks
 
@@ -133,6 +175,8 @@ Each game opens on a card that tells you what the round costs and what a win pay
    wallet, then pick a house, a lord and a name. On the way in, your wallet asks once for the game key.
 2. **WASD** to walk (Shift to run), **E** to talk, trade, enter and take the reins, **C** to whistle for your
    chariot, **Space** to crack the whip, **M** for the map, **J** for the Seal Book, **Esc** to pause.
+   On a phone, turn it sideways: the left thumb is the joystick, drag on the right to look, and the buttons on the
+   right are Use, Run, Chariot and Map.
 3. Follow the objective line at the bottom of the screen. The Seal Book (J) lists every trial and every hall.
 
 With the game key in place, hall rounds, whips and seals are signed without a popup. Buying coin, staking and betting
@@ -265,3 +309,7 @@ cd chain && cargo near build non-reproducible-wasm
 
 The web app talks to `crownfall-vael.testnet` by default. Set `VITE_CONTRACT` to point it at your own deployment
 ([`web/src/chain/near.ts`](web/src/chain/near.ts)).
+
+## License
+
+MIT, see [LICENSE](LICENSE).
