@@ -54,7 +54,7 @@ testnet; you can watch them land on
 | **8.** Drive to the Mumtaz Hippodrome (**H** on the radar). At the stables press **E** (**Race**), then **Watch and bet on NEAR**. While the teams parade, choose a stake and press **Back** on one | `bet` puts your NEAR on that team (a wallet would ask to confirm). At the off the browser starts the race (`start_race`): only now is its seed drawn, from that block. In the first 40 seconds of the run, **Crack the whip** burns 200 of your team's coin (`whip`). |
 | **9.** Watch to the line | The card reads **Settled on NEAR**: `settle` re-ran the race inside the contract ([`sim.rs`](chain/src/sim.rs)) and got the same finish you watched. A winning ticket shows **Collect** (`claim_race`). |
 | **10.** Press **J** for the Seal Book and follow the objective line to the Wardens | Each trial you finish writes a seal to your account with `seal`; the contract checks the ones it can see (coin bought, hall wins, a bet at the Hippodrome). |
-| **11.** Ride to the Ashen Throne on its dais in the capital and step up to it (**♛** on the radar) | Every house ranked by this season's favour (yours is marked), the season clock and the crown pool, all read from the contract. |
+| **11.** Ride to the throne hall in the capital (**♛** on the radar), go in, walk the red runner and stand at the foot of the Ashen Throne | Every house ranked by this season's favour (yours is marked), the season clock and the crown pool, all read from the contract. |
 
 **Check the chain directly.** These read-only calls need no account:
 
@@ -64,7 +64,7 @@ near contract call-function as-read-only crownfall-vael.testnet get_account json
 ```
 
 **Seasons.** A season lasts 24 hours on the contract clock. Enter the hall of the Ashen Throne in the capital (**♛**
-on the radar, **E**: **Enter**) to see this season's favour by house, the time left and the crown pool. Once the time is
+on the radar, **E**: **Enter**) and stand at the foot of the throne (**E**: **Stand**) to see this season's favour by house, the time left and the crown pool. Once the time is
 up, anyone there can press **Crown the house with the most favour** (`end_season`), and the next time you come in, the
 last season's result is at the top with **Take your share** (`claim_crown`) if you played for the crowned house. What
 you'd be paid is read first with `get_crown`, so the button shows the exact amount.
@@ -87,7 +87,7 @@ right are Use, Run, Chariot and Map. Each hall game has its own touch buttons.
 ## The story
 
 The old king of Vael is dead and the Ashen Throne stands empty for one season: a giant's seat of ash-black iron on an
-eight-sided dais before the throne hall in Emberfall, one side for each house, the houses' coin spilled down its steps
+eight-sided dais at the far end of the throne hall in Emberfall, under a rose window, one side for each house, the houses' coin spilled down its steps
 and their eight stones set in its crown (modelled in code in Blender: [`design/blender/throne.py`](design/blender/throne.py)). By the old law the crown goes to
 whoever earns the seals of the **Seven Wardens** before the season ends. You arrive at the south gate with a borrowed
 chariot and a house to swear to.

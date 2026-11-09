@@ -1,4 +1,4 @@
-import { LIBRARY, ROOMS, fade } from './realm/rooms.ts';
+import { LIBRARY, ROOMS, THRONE_ROOM, fade } from './realm/rooms.ts';
 // GTA-style HUD pieces: the objective line, subtitles under letterbox bars, the MISSION PASSED card,
 // the area name when you ride into somewhere new, tips in the corner, and your purse with renown.
 import { useEffect, useRef, useState } from 'react';
@@ -120,7 +120,7 @@ export function AreaName() {
   useEffect(() => {
     let hide = 0;
     const i = setInterval(() => {
-      const z: [string, string] = play.inside === LIBRARY ? ['Qureshi’s Library', 'Liar’s Dice under the dome'] : play.inside >= 0 ? [`The hall of House ${HOUSES[play.inside].name}`, ROOMS[play.inside].gameName + ' is played here'] : zoneAt(me.x, me.z);
+      const z: [string, string] = play.inside === LIBRARY ? ['Qureshi’s Library', 'Liar’s Dice under the dome'] : play.inside === THRONE_ROOM ? ['The hall of the Ashen Throne', 'The seat every house is fighting for'] : play.inside >= 0 ? [`The hall of House ${HOUSES[play.inside].name}`, ROOMS[play.inside].gameName + ' is played here'] : zoneAt(me.x, me.z);
       if (z[0] !== last.current) {
         last.current = z[0]; setZone(z); setShow(true);
         clearTimeout(hide); hide = window.setTimeout(() => setShow(false), 3100);

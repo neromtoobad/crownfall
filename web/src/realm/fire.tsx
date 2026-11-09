@@ -15,7 +15,7 @@ const flameMat = () => new THREE.ShaderMaterial({
     attribute vec2 aFlame; // size, seed
     varying vec2 vUv; varying float vSeed;
     void main() {
-      vec3 base = instanceMatrix[3].xyz;
+      vec3 base = (modelMatrix * vec4(instanceMatrix[3].xyz, 1.0)).xyz; // the parent's transform too (halls sit off the map)
       float s = aFlame.x;
       vec4 mv = viewMatrix * vec4(base, 1.0);
       // Lick upward, a little sway at the tip.

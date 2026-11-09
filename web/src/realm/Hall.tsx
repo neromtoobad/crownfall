@@ -13,7 +13,8 @@ import { addBox, addCircle } from './collide.ts';
 import { HOUSES } from './layout.ts';
 import { Props, type Place } from './Props.tsx';
 import { Embers, FireLight, Flames, type FlameSpot } from './fire.tsx';
-import { LIBRARY, ROOMS, roomOf, type Room } from './rooms.ts';
+import { LIBRARY, ROOMS, THRONE_ROOM, roomOf, type Room } from './rooms.ts';
+import { ThroneRoomScene } from './ThroneRoom.tsx';
 import { LibraryScene } from './Library.tsx';
 import { notice, rest, unturn, useCrowd, useSolid } from './People.tsx';
 import { usePlay } from './play.ts';
@@ -23,7 +24,7 @@ import { M } from './race.ts';
 
 type G = THREE.BufferGeometry;
 const SUN = new THREE.Vector3(-0.6, 0.42, 0.5).normalize(); // matches Realm.tsx
-const T = 1.6; // wall thickness
+export const T = 1.6; // wall thickness
 
 export function rng(seed: number) { let s = seed; return () => { s = (s * 16807) % 2147483647; return s / 2147483647; }; }
 const col = new THREE.Color();
@@ -44,7 +45,7 @@ export function paint(g: G, color: string, jitter = 0.06, r = Math.random) {
 }
 export const merge = (list: G[]) => (list.length ? mergeGeometries(list.map((g) => { const n = g.index ? g.toNonIndexed() : g; n.deleteAttribute('uv'); n.deleteAttribute('normal'); n.computeVertexNormals(); return n; })) : new THREE.BufferGeometry());
 
-interface Opening { wall: 'w' | 'e' | 's' | 'n'; at: number; width: number; y0: number; y1: number }
+export interface Opening { wall: 'w' | 'e' | 's' | 'n'; at: number; width: number; y0: number; y1: number }
 
 /** Where the windows go: tall ones down the long walls, two flanking the door, none behind the dais or the hearth. */
 function openings(r: Room): Opening[] {
@@ -62,7 +63,7 @@ function openings(r: Room): Opening[] {
 }
 
 /** One wall, built around its openings as bands and piers. The wall runs along `len`, centred on (cx, cz). */
-function wall(len: number, h: number, cx: number, cz: number, alongX: boolean, holes: { at: number; width: number; y0: number; y1: number }[], color: string, r: () => number, out: G[]) {
+export function wall(len: number, h: number, cx: number, cz: number, alongX: boolean, holes: { at: number; width: number; y0: number; y1: number }[], color: string, r: () => number, out: G[]) {
   const piece = (a0: number, a1: number, y0: number, y1: number) => {
     if (a1 - a0 < 0.05 || y1 - y0 < 0.05) return;
     const mid = (a0 + a1) / 2, l = a1 - a0;
@@ -105,6 +106,7 @@ export function HallWorld() {
   const p = usePlay();
   if (p.inside < 0) return null;
   if (p.inside === LIBRARY) return <Suspense fallback={null}><LibraryScene /></Suspense>;
+  if (p.inside === THRONE_ROOM) return <Suspense fallback={null}><ThroneRoomScene /></Suspense>;
   return <Suspense fallback={null}><HallScene room={ROOMS[p.inside]} /></Suspense>;
 }
 
@@ -414,7 +416,7 @@ function Banners({ room: r }: { room: Room }) {
 }
 
 /** Daylight beyond each window and the door: bright panes the bloom catches, so the openings read as outside. */
-function Panes({ room: r, ops }: { room: Room; ops: Opening[] }) {
+export function Panes({ room: r, ops }: { room: Room; ops: Opening[] }) {
   const sky = useMemo(() => {
     const c = document.createElement('canvas'); c.width = 4; c.height = 64;
     const g = c.getContext('2d')!, gr = g.createLinearGradient(0, 0, 0, 64);
@@ -439,7 +441,7 @@ function Panes({ room: r, ops }: { room: Room; ops: Opening[] }) {
 }
 
 /** Shafts of sunlight from the windows on the sun's side, falling across the floor. Additive, faint at the floor end. */
-function Shafts({ room: r, ops }: { room: Room; ops: Opening[] }) {
+export function Shafts({ room: r, ops }: { room: Room; ops: Opening[] }) {
   const mat = useMemo(() => new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
     uniforms: { time: { value: 0 }, c: { value: new THREE.Color('#ffd9a0') } },

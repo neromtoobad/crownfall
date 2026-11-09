@@ -2,7 +2,7 @@
 // so the same walking, camera, collision and lighting code works indoors: walk into a keep's door outside and you
 // are moved to its hall; walk back out of the hall door and you stand on the green before the keep again.
 // While you are inside, the realm outside is hidden and the sun only reaches the floor through the windows.
-import { HOUSES, LANDMARKS, type House } from './layout.ts';
+import { CAPITAL, HOUSES, LANDMARKS, type House } from './layout.ts';
 import { ground } from './heights.ts';
 import { emitPlay, me, play } from './play.ts';
 
@@ -12,7 +12,7 @@ export const INDOOR_X = 1500;
 export const indoors = (x: number) => x > INDOOR_X;
 
 export type GameId = 'signals' | 'axes' | 'cups' | 'asp' | 'archery' | 'forge' | 'stones' | 'falcon' | 'dice';
-export type Hall = 'harbour' | 'feast' | 'cellar' | 'marsh' | 'lodge' | 'forge' | 'ice' | 'aerie' | 'library';
+export type Hall = 'harbour' | 'feast' | 'cellar' | 'marsh' | 'lodge' | 'forge' | 'ice' | 'aerie' | 'library' | 'throne';
 
 export interface Room {
   house: number;
@@ -53,11 +53,30 @@ export const LIB_ROOM: Room = {
   pitch: 'Five dice each under the cup. Bid on what’s under both, or call the bluff.', wall: '#8a7a66', floor: 'flags', beam: '#3a2618', fire: '#ffc07a',
   station: [0, 0], folk: [],
 };
-/** Who a room belongs to, for its name and colours: a house, or the Library. */
+/** The tenth: the hall of the Ashen Throne in Emberfall, a long stone nave with the empty throne at its far end.
+ * No game is played here (game is unused); you come to look at what every house is fighting for. */
+export const THRONE_ROOM = 9;
+export const THRONE_HALL: Room = {
+  house: THRONE_ROOM, x: ROOM_X + THRONE_ROOM * ROOM_GAP, z: 0, w: 52, d: 100, h: 36, hall: 'throne', game: 'dice', gameName: '',
+  pitch: 'The empty seat every house in Vael is fighting for.', wall: '#8a8378', floor: 'flags', beam: '#2e2622', fire: '#ffb066',
+  station: [0, 0], folk: [],
+};
+/** Who a room belongs to, for its name and colours: a house, the Library or the throne hall. */
 export const LIB_HOUSE = { id: LIBRARY, name: 'the Library', colors: ['#5b3f6e', '#d6b26e'] as [string, string], coin: 'NEAR', seat: 'Emberfall' };
-export const hallHouse = (i: number) => (i === LIBRARY ? LIB_HOUSE : HOUSES[i]);
-export const roomOf = (i: number) => (i === LIBRARY ? LIB_ROOM : ROOMS[i]);
-export const ALL_ROOMS = [...ROOMS, LIB_ROOM];
+/** Where the throne stands in its hall (room frame): its scale, its dais centre, the front of its stair (the model's
+ * stair reaches 9.8 m in front of the dais centre; Throne.tsx THRONE_SIZE). */
+export const THRONE_SEAT = { scale: 1.2, z: -100 / 2 + 17, stair: -100 / 2 + 17 + 9.8 * 1.2 };
+export const THRONE_HOUSE = { id: THRONE_ROOM, name: 'the Ashen Throne', colors: ['#6a0f17', '#d4a849'] as [string, string], coin: 'NEAR', seat: 'Emberfall' };
+export const hallHouse = (i: number) => (i === LIBRARY ? LIB_HOUSE : i === THRONE_ROOM ? THRONE_HOUSE : HOUSES[i]);
+export const roomOf = (i: number) => (i === LIBRARY ? LIB_ROOM : i === THRONE_ROOM ? THRONE_HALL : ROOMS[i]);
+export const ALL_ROOMS = [...ROOMS, LIB_ROOM, THRONE_HALL];
+
+/** The throne hall's great door in Emberfall, in the middle of its south front (the hall stands at the capital's
+ * x + 35, z - 40 and is 23 deep). */
+export function throneDoor() {
+  const x = CAPITAL.pos[0] + 35, z = CAPITAL.pos[1] - 40 + 11.5;
+  return { x, z, face: 0, out: [x, z + 4] as [number, number] };
+}
 
 /** The Library's door, on the drum between two of the sixteen columns, facing south toward the Mint. */
 export function libDoor() {
@@ -96,14 +115,15 @@ export function enterRoom(h: number) {
 export function leaveRoom() {
   const h = play.inside;
   if (h < 0) return;
-  const d = h === LIBRARY ? libDoor() : doorOf(HOUSES[h]);
+  const d = h === LIBRARY ? libDoor() : h === THRONE_ROOM ? throneDoor() : doorOf(HOUSES[h]);
   fade.at = performance.now();
   setTimeout(() => {
     play.inside = -1;
-    me.x = d.x + Math.sin(d.face) * (h === LIBRARY ? 6 : 5); me.z = d.z + Math.cos(d.face) * (h === LIBRARY ? 6 : 5); me.yaw = d.face; me.speed = 0;
+    const out = h === LIBRARY ? 6 : h === THRONE_ROOM ? 7 : 5;
+    me.x = d.x + Math.sin(d.face) * out; me.z = d.z + Math.cos(d.face) * out; me.yaw = d.face; me.speed = 0;
     me.camYaw = d.face + Math.PI; me.camPitch = 0.22; me.cut = true;
     emitPlay();
   }, fade.dur / 2);
 }
 
-if (import.meta.env.DEV) Object.assign(window, { __rooms: { enterRoom, leaveRoom, ROOMS, LIB_ROOM } });
+if (import.meta.env.DEV) Object.assign(window, { __rooms: { enterRoom, leaveRoom, ROOMS, LIB_ROOM, THRONE_HALL } });

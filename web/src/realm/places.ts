@@ -3,7 +3,7 @@
 import { HIPPODROME, HOUSES, LANDMARKS, yardOf } from './layout.ts';
 import { ARENA } from './race.ts';
 import { play, type Prompt, type Seat } from './play.ts';
-import { LIBRARY, LIB_ROOM, ROOMS, doorOf, inRoom, libDoor } from './rooms.ts';
+import { LIBRARY, LIB_ROOM, ROOMS, THRONE_HALL, THRONE_ROOM, THRONE_SEAT, doorOf, inRoom, libDoor, throneDoor } from './rooms.ts';
 
 export interface Place extends Prompt { x: number; z: number; r: number }
 
@@ -21,7 +21,7 @@ export const STABLES = arena(0, -(ARENA.R + 24));
 export const PLACES: Place[] = [
   { id: 'mint', verb: 'Trade', what: 'at the Warwick Mint counter', panel: 'mint', x: mx + Math.sin(MINT_RY) * 20, z: mz + Math.cos(MINT_RY) * 20, r: 8 },
   { id: 'door-lib', verb: 'Enter', what: "Qureshi's Library", panel: 'enter', house: LIBRARY, x: libDoor().out[0], z: libDoor().out[1], r: 5 },
-  { id: 'council', verb: 'Enter', what: 'the hall of the Ashen Throne', panel: 'council', x: 35, z: 3, r: 8 },
+  { id: 'council', verb: 'Enter', what: 'the hall of the Ashen Throne', panel: 'enter', house: THRONE_ROOM, x: throneDoor().out[0], z: throneDoor().out[1], r: 7 },
   { id: 'rookery', verb: 'Send', what: 'a raven from the rookery', panel: 'raven', x: 77, z: -37, r: 8 },
   { id: 'gate', verb: 'Muster', what: 'a march at the Gershuni Gate', panel: 'march', x: gx, z: gz, r: 12 },
   { id: 'stables', verb: 'Race', what: 'drive a chariot, or bet from the stands', panel: 'race', x: STABLES[0], z: STABLES[1], r: 14 },
@@ -55,6 +55,14 @@ export const ROOM_PLACES: Place[] = ROOMS.flatMap((r): Place[] => {
     { id: 'game-lib', verb: 'Sit down', what: 'to Liar’s Dice with Haseeb Qureshi', panel: 'game', house: LIBRARY, ...at(0, 3.6), r: 2.6 },
     { id: 'chronicle', verb: 'Read', what: 'the chronicle, the Book of Ages', panel: 'library', ...at(-8.5, -8.5), r: 3.2 },
     { id: 'scribes', verb: 'Ask', what: 'the scribes Claude and Codex what to do next', panel: 'scribes', ...at(9, -7.5), r: 3.6 },
+  );
+}
+// Inside the throne hall: the door, and the foot of the throne's stair, where the council of the realm is held.
+{
+  const r = THRONE_HALL, at = (lx: number, lz: number) => { const [x, z] = inRoom(r, lx, lz); return { x, z }; };
+  ROOM_PLACES.push(
+    { id: 'leave-throne', verb: 'Leave', what: 'the hall of the Ashen Throne', panel: 'leave', house: THRONE_ROOM, ...at(0, r.d / 2 - 1.5), r: 4 },
+    { id: 'throne-council', verb: 'Stand', what: 'before the Ashen Throne', panel: 'council', ...at(0, THRONE_SEAT.stair + 2.5), r: 5 },
   );
 }
 

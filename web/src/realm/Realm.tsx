@@ -197,7 +197,8 @@ function Tag({ position, far, z, children }: { position: [number, number, number
 
 function Labels({ onPick }: { onPick: (house: number | 'capital') => void }) {
   // In play the world speaks for itself: the radar, the markers and the area name do this job.
-  if (usePlay().mode === 'play') return null;
+  const { mode, inside } = usePlay();
+  if (mode === 'play' || inside >= 0) return null;
   return (
     <group>
       {HOUSES.map((h) => (
