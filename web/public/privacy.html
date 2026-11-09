@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crownfall · Privacy</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #14100c; color: #f4ead6; font: 17px/1.6 'EB Garamond', Georgia, serif; }
+  main { max-width: 680px; margin: 0 auto; padding: 48px 20px 64px; }
+  h1 { font: 700 30px/1.2 Georgia, serif; letter-spacing: 0.03em; margin: 0 0 6px; }
+  h2 { font: 600 19px/1.3 Georgia, serif; margin: 28px 0 6px; color: #d6b26e; }
+  p, li { color: rgba(244, 234, 214, 0.86); }
+  a { color: #00ec97; }
+  small { color: rgba(244, 234, 214, 0.6); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Crownfall: privacy</h1>
+  <small>Last updated 9 November 2026</small>
+
+  <p>Crownfall is a game on NEAR testnet, built for the NEAR HACKATHON. This page says what it does with your data
+  when you sign in. The code is public at <a href="https://github.com/neromtoobad/crownfall">github.com/neromtoobad/crownfall</a>.</p>
+
+  <h2>Signing in with Google</h2>
+  <p>Google sends the game a signed token. The game checks it with Google and reads two things from it: your Google
+  account's id and your first name. From the id it derives a key for your NEAR testnet account; from the first name
+  it makes the account's name (for example <code>ada-x7k2.vael.testnet</code>). It does not keep your email, your
+  photo or the token, and it has no database of players.</p>
+
+  <h2>Signing in with a name</h2>
+  <p>Your browser makes its own key and sends only the public half. The game makes the account and never sees the
+  private key.</p>
+
+  <h2>What is public</h2>
+  <p>Your NEAR testnet account name and everything it does in the game (coins bought, rounds played, bets) are on a
+  public blockchain, like any NEAR account. The name you give your lord and your house stay in your browser.</p>
+
+  <h2>What stays in your browser</h2>
+  <p>Your account's key, your seat, your practice purse and your progress are kept in your browser's local storage.
+  Signing out keeps the key so you can come back; clearing your browser's data removes it.</p>
+
+  <h2>No tracking</h2>
+  <p>No analytics, no ads, no cookies of our own. The site is hosted on Vercel, which keeps standard server logs.</p>
+
+  <h2>Contact</h2>
+  <p>Questions or a request to remove anything: open an issue on the
+  <a href="https://github.com/neromtoobad/crownfall/issues">GitHub repository</a>.</p>
+
+  <p><a href="/">Back to the realm</a></p>
+</main>
+</body>
+</html>
