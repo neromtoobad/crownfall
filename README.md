@@ -277,6 +277,10 @@ same contract calls you do, and the contract treats them like any other player
   in the race for the Ashen Throne. It closes those rounds as lost, since it didn't play them.
 
 The race card lists the rivals' moves in the current race with their reasons, each one linked to its transaction.
+They run on Railway around the clock; their feed is public at
+[`crownfall-rivals-production.up.railway.app/feed`](https://crownfall-rivals-production.up.railway.app/feed)
+(records, purses and the last 80 moves with transaction hashes). Their keys are full-access testnet keys, because
+NEAR function-call keys can't attach the deposit a bet or a coin buy needs.
 
 **The game key.** When you connect, your wallet adds one function-call key, limited to this contract and to `enter`,
 `finish`, `seal`, `whip`, `call_race`, `start_race`, `settle`, `claim_race`, `claim_crown`, `end_season` and `sell`, with a

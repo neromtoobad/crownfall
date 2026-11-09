@@ -23,6 +23,7 @@ import { createServer } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { gunzipSync } from 'node:zlib';
 
 const CONTRACT = process.env.CONTRACT ?? 'crownfall-vael.testnet';
 // Public RPCs rate-limit; views fail over between them and back off, sends use the first.
@@ -114,6 +115,11 @@ async function call(r, method, args, near = 0) {
 
 mkdirSync(DATA, { recursive: true });
 const FILE = join(DATA, 'rivals.json');
+// A fresh volume can be seeded once from STATE_SEED (the state file, gzipped and base64'd) so the feed keeps its history.
+if (!existsSync(FILE) && process.env.STATE_SEED) {
+  mkdirSync(DATA, { recursive: true });
+  writeFileSync(FILE, gunzipSync(Buffer.from(process.env.STATE_SEED, 'base64')));
+}
 const state = existsSync(FILE) ? JSON.parse(readFileSync(FILE, 'utf8')) : { events: [], past: {}, tribute: {} };
 for (const r of RIVALS) state.past[r.id] ??= [];
 const save = () => writeFileSync(FILE, JSON.stringify(state));

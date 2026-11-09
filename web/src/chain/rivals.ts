@@ -3,7 +3,7 @@
 // is open. If the feed can't be reached the card simply shows no rivals.
 import { useSyncExternalStore } from 'react';
 
-export const RIVALS_URL = (import.meta.env.VITE_RIVALS as string | undefined) ?? 'https://crownfall-rivals.up.railway.app';
+export const RIVALS_URL = (import.meta.env.VITE_RIVALS as string | undefined) ?? 'https://crownfall-rivals-production.up.railway.app';
 
 export interface Rival { id: string; account: string; name: string; house: number; style: string; purse?: number; races: number; won: number; net: number }
 export interface RivalEvent { t: number; who?: string; kind: string; race?: number; house?: number | null; near?: number; why?: string; by?: 'model' | 'rule'; tx?: string; tick?: number }
