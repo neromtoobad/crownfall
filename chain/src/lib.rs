@@ -8,8 +8,10 @@
 //! - **Play to burn.** Every round of a hall game burns the house's coin (`enter`). Burning shrinks supply against the
 //!   same reserve, so every round played raises the price for everyone who holds that house. Coin burned is favour for
 //!   the house: the only favour there is.
-//! - **The Library.** Liar's Dice against Haseeb Qureshi is staked in NEAR. A win hands the stake back; a lost stake
-//!   goes to the crown pool.
+//! - **The Library.** A wager the contract settles itself: stake 0.01–1 NEAR and your five dice are rolled from that
+//!   block. Bid how many of one face lie under both cups; Haseeb's five are rolled from the block that takes your bid,
+//!   so neither of you could know them. A true bid pays fair odds less 5%, from the Library's own bank; a false one
+//!   goes to the bank. Only a win the chain decided counts for the Library seal.
 //! - **The Seven Wardens' seals** are kept per account. Mint needs a coin bought and a round played; Bridge,
 //!   Lighthouse and Library a won round of that hall's game; Hippodrome a bet on a race here; the Throne the other six
 //!   and wins in three halls.
@@ -21,9 +23,10 @@
 //!   that house's players in proportion to their favour. Shares left unclaimed when the next season ends roll into
 //!   that season's pool; race winnings left unclaimed 100 races later go to the crown pool.
 //!
-//! What is NOT proven here: a hall round's result is reported by the player's own client (`finish`). So a win moves
-//! no money and no favour: it counts for the seals and for the house's tally of wins, nothing else. NEAR only moves on
-//! what the chain itself computes: the curve, burns, races, stakes lost, and the crown.
+//! What is NOT proven here: a hall round's result (outside the Library) is reported by the player's own client
+//! (`finish`). So such a win moves no money and no favour: it counts for the seals and for the house's tally of wins,
+//! nothing else. NEAR only moves on what the chain itself computes: the curve, burns, races, the Library's dice, the
+//! Gate's toll, and the crown.
 //!
 //! Storage: a record a player's deposit creates (an account's first holding of a coin, its player record, its ticket
 //! for a race) costs a flat 0.0025 NEAR taken from that deposit. Races older than 100 are deleted as new ones are
@@ -74,8 +77,41 @@ pub const TICKERS: [&str; HOUSES] = ["HERON", "BOAR", "RAM", "ASP", "OWL", "BULL
 pub const GAMES: [&str; 9] = ["signals", "axes", "cups", "asp", "archery", "forge", "stones", "falcon", "dice"];
 /// Coin burned for one round in each house's hall.
 pub const ENTRY: [u128; HOUSES] = [400 * COIN, 400 * COIN, 400 * COIN, 400 * COIN, 400 * COIN, 400 * COIN, 500 * COIN, 400 * COIN];
-/// NEAR staked on one game in the Library.
-pub const LIBRARY_STAKE: u128 = NEAR;
+/// The least and most NEAR one wager in the Library takes.
+pub const LIBRARY_MIN: u128 = NEAR / 100;
+pub const LIBRARY_MAX: u128 = NEAR;
+/// The Library keeps 5% of a fair payout.
+pub const LIBRARY_EDGE_BPS: u128 = 500;
+/// Out of 6^5 = 7776 rolls of Haseeb's five dice, how many show at least k of one face (k = 1..5).
+pub const LIBRARY_ODDS: [u128; 5] = [4651, 1526, 276, 26, 1];
+/// The toll to pass the Gate: its trial is a drive the chain can't see, so the seal is paid for. It goes to the crown.
+pub const GATE_TOLL: u128 = NEAR / 100;
+/// The Library's bank and its open cups live in raw storage beside the realm's state (no migration needed).
+const LIB_BANK: &[u8] = b"lib:bank";
+fn lib_key(round: u64) -> Vec<u8> {
+    [b"lib:cup:".as_slice(), &round.to_le_bytes()].concat()
+}
+/// Five dice from a block's randomness, mixed with the round (two stakes in one block differ) and whose cup it is.
+pub fn roll5(seed: &[u8], round: u64, cup: u8) -> [u8; 5] {
+    let h = env::sha256(&[seed, &round.to_le_bytes(), &[cup]].concat());
+    let mut out = [0u8; 5];
+    let mut n = 0;
+    // 252 = 42 × 6: bytes above it are skipped so every face is equally likely.
+    for &b in h.iter() {
+        if b < 252 && n < 5 {
+            out[n] = b % 6 + 1;
+            n += 1;
+        }
+    }
+    require!(n == 5, "unlucky hash");
+    out
+}
+/// What a true bid pays back in all (stake included), when Haseeb must show `need` more of the face.
+pub fn library_pays(stake: u128, need: u8) -> u128 {
+    require!((1..=5).contains(&need), "bid one to five more than you hold");
+    let fair = mul_div(stake, 7776, LIBRARY_ODDS[need as usize - 1]);
+    fair - fair * LIBRARY_EDGE_BPS / 10_000
+}
 pub const SEALS: [&str; 7] = ["Gate", "Mint", "Bridge", "Lighthouse", "Library", "Hippodrome", "Throne"];
 /// Laps per cup, as race.ts names them: race n is run for cup n % 7.
 pub const CUP_LAPS: [u8; 7] = [3, 2, 3, 1, 2, 3, 2];
@@ -141,6 +177,14 @@ pub struct Round {
     /// Coin burned, or (in the Library) NEAR staked.
     pub amount: u128,
     pub at_ns: u64,
+}
+
+/// Your five dice in the Library, rolled when you stake, and the block they came from.
+#[near(serializers = [borsh, json])]
+#[derive(Clone)]
+pub struct LibCup {
+    pub mine: [u8; 5],
+    pub height: u64,
 }
 
 #[near(serializers = [borsh])]
@@ -386,7 +430,7 @@ impl Realm {
     }
 
     pub fn version(&self) -> String {
-        "2".into()
+        "3".into()
     }
 
     // ---------- Coin ----------
@@ -458,54 +502,75 @@ impl Realm {
         id
     }
 
-    /// Sit down at Haseeb's table in the Library with the stake attached.
+    /// Sit down at Haseeb's table in the Library with 0.01–1 NEAR attached. Your five dice are rolled from this block
+    /// (they're in the event and in `get_library`); Haseeb's aren't rolled until you bid.
     #[payable]
     pub fn stake(&mut self) -> u64 {
         let who = env::predecessor_account_id();
-        require!(env::attached_deposit().as_yoctonear() == LIBRARY_STAKE, "the stake is exactly 1 NEAR");
-        let id = self.open_round(&who, LIBRARY, LIBRARY_STAKE);
-        event("stake", json!({"round": id, "who": who, "near": U128(LIBRARY_STAKE)}));
+        let amount = env::attached_deposit().as_yoctonear();
+        require!((LIBRARY_MIN..=LIBRARY_MAX).contains(&amount), "stake 0.01 to 1 NEAR");
+        let id = self.open_round(&who, LIBRARY, amount);
+        let cup = LibCup { mine: roll5(&env::random_seed(), id, 0), height: env::block_height() };
+        env::storage_write(&lib_key(id), &near_sdk::borsh::to_vec(&cup).unwrap());
+        event("stake", json!({"round": id, "who": who, "near": U128(amount), "dice": cup.mine}));
         id
     }
 
+    /// Fund the Library's bank (anyone). Wins are paid from it, lost stakes go into it.
+    #[payable]
+    pub fn fund_library(&mut self) -> U128 {
+        let near = env::attached_deposit().as_yoctonear();
+        require!(near > 0, "attach some NEAR");
+        let bank = self.bank() + near;
+        self.set_bank(bank);
+        event("library_funded", json!({"who": env::predecessor_account_id(), "near": U128(near), "bank": U128(bank)}));
+        U128(bank)
+    }
+
     /// End a round. `grade` is how good a win was, 0–100. The round's player reports it; anyone can close a round
-    /// that has run past the hour, as lost. The chain can't see the game, so a reported win pays nothing: it marks the
-    /// hall as won (for the seals), adds to the house's tally of wins, and in the Library hands the stake back.
-    pub fn finish(&mut self, round: u64, won: bool, grade: Option<u8>) -> Option<Promise> {
+    /// that has run past the hour, as lost. The chain can't see a hall game, so a reported win pays nothing: it marks
+    /// the hall as won (for the seals) and adds to the house's tally of wins.
+    ///
+    /// In the Library `won` is ignored: the player's `bid` [count, face] is settled here. Haseeb's five dice are rolled
+    /// from this block; if both cups show at least `count` of `face`, the bid pays fair odds less 5%. No bid (walking
+    /// out) or a late close loses the stake to the Library's bank.
+    pub fn finish(&mut self, round: u64, won: bool, grade: Option<u8>, bid: Option<(u8, u8)>) -> Value {
         let who = env::predecessor_account_id();
         let r = self.rounds.remove(&round).unwrap_or_else(|| env::panic_str("no such round, or it's over"));
         let late = env::block_timestamp() > r.at_ns + ROUND_SECS * SEC;
         require!(who == r.who || late, "not your round");
+        if r.hall == LIBRARY {
+            let bid = if late || who != r.who { None } else { bid };
+            return self.close_library(round, r, bid);
+        }
         let won = won && !late && who == r.who;
         let grade = grade.unwrap_or(50).min(100);
         let mut p = self.player(&r.who);
-        let mut pay = None;
         if won {
             p.wins += 1;
             p.halls_won |= 1 << r.hall;
-            if r.hall < LIBRARY {
-                self.houses[r.hall as usize].wins += 1;
-            }
-        }
-        if r.hall == LIBRARY {
-            if won {
-                pay = Some(Promise::new(r.who.clone()).transfer(NearToken::from_yoctonear(r.amount)));
-            } else {
-                self.pool += r.amount;
-            }
+            self.houses[r.hall as usize].wins += 1;
         }
         self.put_player(&r.who, p);
         event("finish", json!({"round": round, "who": r.who, "hall": r.hall, "won": won, "grade": grade}));
-        pay
+        json!({"round": round, "won": won})
     }
 
     // ---------- The Seven Wardens ----------
 
-    /// Take a Warden's seal. Each one checks what the chain can see. (The Gate's trial is the drive in from the gate:
-    /// nothing on chain to check, so it asks for nothing.)
+    /// Take a Warden's seal. Each one checks what the chain can see. (The Gate's trial is the drive in from the gate,
+    /// which the chain can't see, so its seal takes a 0.01 NEAR toll for the crown pool instead.)
+    #[payable]
     pub fn seal(&mut self, seal: u8) {
         let who = env::predecessor_account_id();
         require!((seal as usize) < SEALS.len(), "no such seal");
+        let paid = env::attached_deposit().as_yoctonear();
+        if seal == 0 {
+            require!(paid == GATE_TOLL, "the Gate's toll is 0.01 NEAR");
+            self.pool += paid;
+        } else {
+            require!(paid == 0, "this seal takes no NEAR");
+        }
         let mut p = self.player(&who);
         let has = |p: &Player, s: usize| p.seals & (1 << s) != 0;
         require!(!has(&p, seal as usize), "you already hold that seal");
@@ -879,7 +944,7 @@ impl Realm {
     pub fn get_realm(&self) -> Value {
         let s = self.season;
         json!({
-            "version": "2",
+            "version": "3",
             "season": s,
             "season_ends_ns": U128(self.season_ends_ns as u128),
             "pool": U128(self.pool),
@@ -890,6 +955,17 @@ impl Realm {
                 "wins": g.wins, "entry": U128(ENTRY[i]),
                 "favour": U128(if g.fav_season == s { g.favour } else { 0 }),
             })).collect::<Vec<_>>(),
+        })
+    }
+
+    /// The Library: its bank, the stake limits, the odds, and (with `round`) your cup.
+    pub fn get_library(&self, round: Option<u64>) -> Value {
+        json!({
+            "bank": U128(self.bank()),
+            "min": U128(LIBRARY_MIN), "max": U128(LIBRARY_MAX), "edge_bps": LIBRARY_EDGE_BPS as u64,
+            "odds": LIBRARY_ODDS.iter().map(|&n| n as u64).collect::<Vec<_>>(), "of": 7776,
+            "cup": round.and_then(|id| self.cup(id)),
+            "round": round.and_then(|id| self.rounds.get(&id).map(|r| json!({"who": r.who, "near": U128(r.amount), "at_ns": U128(r.at_ns as u128)}))),
         })
     }
 
@@ -1101,6 +1177,53 @@ impl Realm {
         }
         mt_event("mt_transfer", e);
         ids
+    }
+    fn bank(&self) -> u128 {
+        env::storage_read(LIB_BANK).map(|b| u128::from_le_bytes(b.try_into().unwrap())).unwrap_or(0)
+    }
+    fn set_bank(&mut self, v: u128) {
+        env::storage_write(LIB_BANK, &v.to_le_bytes());
+    }
+    fn cup(&self, round: u64) -> Option<LibCup> {
+        env::storage_read(&lib_key(round)).map(|b| near_sdk::borsh::from_slice(&b).unwrap())
+    }
+    fn close_library(&mut self, id: u64, r: Round, bid: Option<(u8, u8)>) -> Value {
+        let Some(cup) = self.cup(id) else {
+            // Staked before the Library rolled dice on chain: there's nothing to settle, so the stake goes back.
+            Promise::new(r.who.clone()).transfer(NearToken::from_yoctonear(r.amount)).detach();
+            event("finish", json!({"round": id, "who": r.who, "hall": LIBRARY, "won": false, "refunded": U128(r.amount)}));
+            return json!({"round": id, "won": false, "refunded": U128(r.amount)});
+        };
+        let bank = self.bank();
+        let Some((count, face)) = bid else {
+            env::storage_remove(&lib_key(id));
+            self.set_bank(bank + r.amount);
+            event("finish", json!({"round": id, "who": r.who, "hall": LIBRARY, "won": false, "mine": cup.mine}));
+            return json!({"round": id, "won": false, "mine": cup.mine});
+        };
+        require!((1..=6).contains(&face), "a face is 1 to 6");
+        let have = cup.mine.iter().filter(|&&d| d == face).count() as u8;
+        require!(count > have, "bid more than you hold yourself");
+        let pays = library_pays(r.amount, count - have);
+        require!(pays - r.amount <= bank / 2, "the Library's bank can't cover that bid: bid lower");
+        require!(env::block_height() > cup.height, "Haseeb rolls in a later block than yours: try again");
+        env::storage_remove(&lib_key(id));
+        let his = roll5(&env::random_seed(), id, 1);
+        let shown = have + his.iter().filter(|&&d| d == face).count() as u8;
+        let won = shown >= count;
+        let mut p = self.player(&r.who);
+        if won {
+            p.wins += 1;
+            p.halls_won |= 1 << LIBRARY;
+            self.set_bank(bank - (pays - r.amount));
+            Promise::new(r.who.clone()).transfer(NearToken::from_yoctonear(pays)).detach();
+        } else {
+            self.set_bank(bank + r.amount);
+        }
+        self.put_player(&r.who, p);
+        let paid = U128(if won { pays } else { 0 });
+        event("finish", json!({"round": id, "who": r.who, "hall": LIBRARY, "won": won, "bid": [count, face], "mine": cup.mine, "his": his, "shown": shown, "paid": paid}));
+        json!({"round": id, "won": won, "bid": [count, face], "mine": cup.mine, "his": his, "shown": shown, "paid": paid})
     }
     fn open_round(&mut self, who: &AccountId, hall: u8, amount: u128) -> u64 {
         let id = self.next_round;

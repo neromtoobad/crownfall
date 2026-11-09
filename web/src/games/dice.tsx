@@ -2,6 +2,11 @@
 // you see only your own. Take turns bidding on how many of one face lie under BOTH cups ("three fives"): each bid
 // must be higher (more dice, or as many of a higher face). Or call the last bid a lie: both cups come up, and whoever
 // was wrong loses a die. First to lose all five loses. No wilds. Haseeb plays the odds, and bluffs a little.
+//
+// On NEAR the table is one wager the contract settles itself, so a win can't be reported by the browser: your five
+// dice are rolled on chain in the block that takes your stake, you make one bid, and Haseeb's five are rolled from the
+// block that takes it. If both cups show at least that many of the face, the contract pays fair odds less 5% from the
+// Library's bank; if not, the stake goes to the bank.
 import { useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
@@ -9,6 +14,8 @@ import { burst, voice } from '../realm/sound.ts';
 import type { Room } from '../realm/rooms.ts';
 import { usePlay } from '../realm/play.ts';
 import { gameKeys, gameUi, register, session, type Result } from './host.ts';
+import { LIB_STAKE, bidLibrary, libChance, libPays, library } from '../chain/game.ts';
+import { units } from '../chain/near.ts';
 
 const TOP = 1.95;      // table height
 const START = 5;       // dice each
@@ -107,9 +114,12 @@ const LINES = {
 };
 const any = (a: string[]) => a[Math.floor(Math.random() * a.length)];
 
-type Phase = 'roll' | 'peek' | 'bid' | 'reveal' | 'over';
+type Phase = 'roll' | 'peek' | 'bid' | 'wait' | 'reveal' | 'over';
+/** A bid on chain, as the HUD shows it: how many more Haseeb's cup must show, the chance, what it pays. */
+interface Quote { have: number; need: number; chance: number; pays: number; cover: boolean }
 const ui = gameUi({
   phase: 'roll' as Phase, turn: 'you' as Who, you: START, him: START, yours: [] as number[],
+  wager: false, quote: undefined as Quote | undefined, bank: 0,
   bid: undefined as Bid | undefined, pick: { q: 1, f: 2 }, line: 'Haseeb rattles his cup.', who: '', reveal: undefined as undefined | { n: number; ok: boolean; loser: Who },
 });
 
@@ -117,11 +127,13 @@ interface S {
   phase: Phase; t: number; turn: Who; starter: Who;
   yours: number[]; his: number[]; you: number; him: number;
   bid?: Bid; think: number; reveal?: { n: number; ok: boolean; loser: Who }; nextRattle: number; done: boolean;
+  /** On NEAR: what the contract paid for the bid. */
+  paid: number;
 }
 
 function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
   const camera = useThree((st) => st.camera);
-  const s = useRef<S>({ phase: 'roll', t: 0, turn: 'you', starter: Math.random() < 0.5 ? 'you' : 'him', yours: [], his: [], you: START, him: START, think: 0, nextRattle: 0, done: false }).current;
+  const s = useRef<S>({ phase: 'roll', t: 0, turn: 'you', starter: Math.random() < 0.5 ? 'you' : 'him', yours: [], his: [], you: START, him: START, think: 0, nextRattle: 0, done: false, paid: 0 }).current;
   const cups = useRef<(THREE.Group | null)[]>([]);
   const dice = useRef<(THREE.Group | null)[]>([]);
   const faces = useRef<(THREE.Mesh | null)[]>([]);
@@ -136,7 +148,58 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     ui.set({ phase: 'roll', you: s.you, him: s.him, yours: [...s.yours].sort(), bid: undefined, reveal: undefined, turn: s.turn });
     tell('Both cups rattle.');
   };
-  useMemo(() => { ui.reset(); deal(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, []);
+  // ---- On NEAR: one bid against Haseeb's cup, settled by the contract.
+  const wager = session.live;
+  const bank = () => units(session.lib?.bank);
+  const quote = (q: number, f: number): Quote | undefined => {
+    const lib = session.lib; if (!lib) return undefined;
+    const have = count(s.yours, f), need = q - have, pays = libPays(lib, LIB_STAKE, need);
+    return { have, need, chance: libChance(lib, need), pays, cover: need >= 1 && need <= 5 && pays - LIB_STAKE <= bank() / 2 };
+  };
+  const wagerPick = () => {
+    const f = [1, 2, 3, 4, 5, 6].sort((a, b) => count(s.yours, b) - count(s.yours, a) || b - a)[0];
+    return { q: count(s.yours, f) + 1, f };
+  };
+  const sitDown = () => {
+    s.yours = session.lib?.cup?.mine ?? []; s.his = []; s.bid = undefined; s.reveal = undefined;
+    s.phase = 'roll'; s.t = 0; s.turn = 'you';
+    const pick = wagerPick();
+    ui.set({ phase: 'roll', wager: true, you: START, him: START, yours: [...s.yours].sort(), bid: undefined, reveal: undefined, turn: 'you', pick, quote: quote(pick.q, pick.f), bank: bank() });
+    tell('Both cups rattle. Yours was rolled on NEAR when you staked.');
+  };
+  const bidOnChain = (q: number, f: number) => {
+    const round = session.chainRound;
+    if (round === undefined) return;
+    // The bid closes the round: walking out now mustn't close it a second time.
+    session.chainRound = undefined;
+    s.bid = { q, f, who: 'you' }; s.phase = 'wait'; s.t = 0;
+    ui.set({ phase: 'wait', bid: s.bid });
+    tell(`You bid ${bidText({ q, f })}. Haseeb’s dice are rolled from the block that takes it…`);
+    bidLibrary(round, q, f).then((r) => {
+      if (s.done) return;
+      s.his = r.his ?? [];
+      const n = r.shown ?? count(s.yours, f) + count(s.his, f);
+      s.reveal = { n, ok: r.won, loser: r.won ? 'him' : 'you' };
+      s.paid = units(r.paid);
+      s.phase = 'reveal'; s.t = 0;
+      ui.set({ phase: 'reveal', reveal: s.reveal });
+    }).catch((e: Error) => {
+      if (s.done) return;
+      session.chainRound = round;
+      s.bid = undefined; s.phase = 'bid'; s.t = 0;
+      ui.set({ phase: 'bid', bid: undefined });
+      tell(/later block/.test(e.message) ? 'Too quick: Haseeb rolls in a later block than yours. Bid again.' : /can't cover/.test(e.message) ? 'The Library’s bank can’t cover that bid. Bid lower.' : `The bid didn’t go through: ${e.message}`);
+    });
+  };
+
+  useMemo(() => {
+    ui.reset();
+    if (!wager) { deal(); return; }
+    sitDown();
+    // If the dice couldn't be read back at the stake, read them now.
+    if (!session.lib?.cup && session.chainRound !== undefined) void library(session.chainRound).then((l) => { session.lib = l; sitDown(); }).catch(() => tell('Couldn’t read your cup from NEAR. Esc to leave (the stake goes to the Library).'));
+    /* eslint-disable-line react-hooks/exhaustive-deps */
+  }, []);
 
   const defaultPick = () => {
     if (!s.bid) { const best = [1, 2, 3, 4, 5, 6].sort((a, b) => count(s.yours, b) - count(s.yours, a) || b - a)[0]; return { q: Math.max(1, count(s.yours, best)), f: best }; }
@@ -196,8 +259,48 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     } else if (s.phase === 'peek') {
       if (s.t > 0.9) {
         s.phase = 'bid'; s.t = 0; s.think = 1.2;
-        ui.set({ phase: 'bid', pick: defaultPick() });
-        if (s.turn === 'you') tell('You open the bidding.'); else tell('Haseeb opens.');
+        if (wager) {
+          const pick = wagerPick();
+          ui.set({ phase: 'bid', pick, quote: quote(pick.q, pick.f) });
+          tell('One bid: how many of one face lie under both cups?');
+        } else {
+          ui.set({ phase: 'bid', pick: defaultPick() });
+          if (s.turn === 'you') tell('You open the bidding.'); else tell('Haseeb opens.');
+        }
+      }
+    } else if (s.phase === 'bid' && wager) {
+      let { q, f } = ui.state.pick;
+      for (const k of ks) {
+        if (k === 'w' || k === 'arrowup') q = Math.min(START * 2, q + 1);
+        else if (k === 's' || k === 'arrowdown') q = Math.max(1, q - 1);
+        else if (k === 'd' || k === 'arrowright') f = f % 6 + 1;
+        else if (k === 'a' || k === 'arrowleft') f = ((f + 4) % 6) + 1;
+        else if (k === 'e' || k === 'enter') {
+          const qt = quote(q, f);
+          if (!qt) { tell('Your cup hasn’t come back from NEAR yet.'); continue; }
+          if (qt.need < 1) { tell(`You hold ${NUM[qt.have]} yourself: bid more than that.`); continue; }
+          if (qt.need > 5) { tell('Haseeb only has five dice.'); continue; }
+          if (!qt.cover) { tell('The Library’s bank can’t cover that bid. Bid lower.'); continue; }
+          bidOnChain(q, f); return;
+        }
+      }
+      if (q !== ui.state.pick.q || f !== ui.state.pick.f) { ui.set({ pick: { q, f }, quote: quote(q, f), line: 'One bid: how many of one face lie under both cups?', who: '' }); burst(1500, 3, 0.02, 0.04); }
+    } else if (s.phase === 'wait') {
+      if (clock.elapsedTime > s.nextRattle) { burst(2200 + Math.random() * 1600, 1.4, 0.04, 0.05); s.nextRattle = clock.elapsedTime + 0.08 + Math.random() * 0.08; }
+    } else if (s.phase === 'reveal' && wager) {
+      const r = s.reveal!, b = s.bid!;
+      if (s.t > 0.75 && s.t - dt <= 0.75) {
+        burst(900, 1, 0.06, 0.3);
+        tell(`${NUM[r.n] ?? r.n} ${r.n === 1 ? FACE_NAME[b.f].replace(/s$/, '').replace('sixe', 'six') : FACE_NAME[b.f]} on the table. ${r.ok ? `Your bid was true: the contract pays ${s.paid.toFixed(3)} NEAR.` : 'Your bid was short: the stake goes to the Library’s bank.'}`);
+      }
+      if (s.t > 2.6 && s.t - dt <= 2.6) say(any(r.ok ? LINES.heLoses : LINES.heWins));
+      if (s.t > 4.2) { s.phase = 'over'; s.t = 0; ui.set({ phase: 'over' }); if (r.ok) burst(1800, 3, 0.05, 0.5); }
+    } else if (s.phase === 'over' && wager) {
+      if (s.t > 2.4) {
+        s.done = true;
+        const r = s.reveal!, b = s.bid!;
+        end({ won: r.ok, score: r.n, grade: 1, paid: s.paid, line: r.ok ? `You bid ${bidText(b)} and the cups showed ${NUM[r.n] ?? r.n}. The contract paid ${s.paid.toFixed(3)} NEAR.` : `You bid ${bidText(b)}; the cups showed ${NUM[r.n] ?? r.n}. Haseeb keeps the ${LIB_STAKE} NEAR for the Library.` });
+        return;
       }
     } else if (s.phase === 'bid') {
       if (s.turn === 'him') {
@@ -249,8 +352,9 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
       const g = cups.current[who === 'you' ? 0 : 1]; if (!g) continue;
       const side = SIDE[who];
       let y = TOP, rx = 0, x = 0, z = side * CUP_Z;
+      if (s.phase === 'wait' && who === 'him') { y += 0.08 + Math.abs(Math.sin(s.t * 34)) * 0.07; x = Math.sin(s.t * 29) * 0.05; rx = Math.sin(s.t * 25) * 0.08; }
       if (s.phase === 'roll') { const k = Math.min(1, s.t / 0.2) * (s.t < 1.2 ? 1 : 0); y += 0.12 * k + Math.abs(Math.sin(s.t * 38 + side)) * 0.08 * k; x = Math.sin(s.t * 31 + side) * 0.06 * k; rx = Math.sin(s.t * 27) * 0.1 * k; }
-      const peek = who === 'you' && (s.phase === 'peek' || s.phase === 'bid');
+      const peek = who === 'you' && (s.phase === 'peek' || s.phase === 'bid' || s.phase === 'wait');
       const lift = reveal ? Math.min(1, s.t / 0.5) : peek ? Math.min(1, (s.phase === 'peek' ? s.t : 1) / 0.5) : 0;
       // Lifted and set down on its side next to the dice, so nothing hides them from you.
       let rz = 0;
@@ -302,8 +406,36 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
 }
 
 const PIPS = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
+function WagerHud() {
+  const s = ui.use();
+  const q = s.quote, mine = s.phase === 'bid';
+  return (
+    <div className="game-hud dice">
+      {s.phase !== 'roll' && <div className="mine">Your cup, rolled on NEAR: {s.yours.map((d, i) => <b key={i} className={(s.bid ?? s.pick) && d === (s.bid ?? s.pick).f ? 'hit' : ''}>{PIPS[d]}</b>)}</div>}
+      {s.bid && <div className="big">You bid: {bidText(s.bid)}</div>}
+      <div className="line">{s.who && <b>{s.who}: </b>}{s.line}</div>
+      {mine && (
+        <div className="picker">
+          <span><kbd>W</kbd><kbd>S</kbd> {s.pick.q}</span><span>×</span><span><kbd>A</kbd><kbd>D</kbd> <b>{PIPS[s.pick.f]}</b> {FACE_NAME[s.pick.f]}</span>
+        </div>
+      )}
+      {mine && q && (
+        <div className="hint">
+          {q.need < 1 ? `You hold ${NUM[q.have]} yourself: bid higher.` : q.need > 5 ? 'Haseeb only has five dice.' : <>
+            Haseeb’s cup must show {NUM[q.need]} more · {(q.chance * 100).toFixed(1)}% · pays {q.pays.toFixed(3)} NEAR
+            {!q.cover && ' · more than the bank can cover'}
+          </>}
+        </div>
+      )}
+      {mine && <div className="hint"><kbd>E</kbd> bid {bidText(s.pick)} for {LIB_STAKE} NEAR · fair odds less 5%, from the Library’s bank ({s.bank.toFixed(2)} NEAR)</div>}
+      {s.phase === 'wait' && <div className="hint">The contract is rolling Haseeb’s cup…</div>}
+    </div>
+  );
+}
+
 function Hud() {
   const s = ui.use();
+  if (s.wager) return <WagerHud />;
   const myTurn = s.phase === 'bid' && s.turn === 'you';
   return (
     <div className="game-hud dice">
@@ -327,7 +459,7 @@ function Hud() {
 
 register({
   id: 'dice', name: 'Liar’s Dice',
-  pitch: 'Five dice each under a cup; you only see yours. Bid on how many of a face lie under both cups, each bid higher than the last, or call Haseeb’s bid a lie. Whoever is wrong loses a die. No wilds.',
+  pitch: 'Five dice each under a cup; you only see yours. Bid on how many of a face lie under both cups, each bid higher than the last, or call Haseeb’s bid a lie. Whoever is wrong loses a die. No wilds. On NEAR it’s one bid, settled by the contract.',
   keys: [['W S', 'how many'], ['A D', 'which face'], ['E', 'bid'], ['Space', 'call “Liar!”'], ['Esc', 'leave']],
   entry: 1,
   Station, Play, Hud,

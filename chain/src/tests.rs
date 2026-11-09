@@ -83,7 +83,7 @@ fn buying_and_burning_move_the_price() {
     assert_eq!(r.holding(2, &acc("ana.testnet")).coins, held - ENTRY[2]);
     assert!(get_logs().iter().any(|l| l.contains("mt_burn")));
     ctx("ana.testnet", 0, 1010);
-    r.finish(round, true, Some(100));
+    r.finish(round, true, Some(100), None);
     let hold = r.holding(2, &acc("ana.testnet"));
     assert_eq!(hold.favour, ENTRY[2], "favour is the coin burned: a reported win adds none");
     assert_eq!(r.houses[2].wins, 1, "the win goes on the house's tally");
@@ -116,10 +116,10 @@ fn a_reported_win_moves_no_money() {
     for i in 0..3 {
         ctx("ana.testnet", 0, 1002 + i);
         let a = r.enter(4);
-        r.finish(a, true, Some(100));
+        r.finish(a, true, Some(100), None);
         ctx("bob.testnet", 0, 1002 + i);
         let b = r.enter(4);
-        r.finish(b, false, None);
+        r.finish(b, false, None, None);
     }
     let fa = r.holding(4, &acc("ana.testnet")).favour;
     let fb = r.holding(4, &acc("bob.testnet")).favour;
@@ -144,7 +144,7 @@ fn only_you_finish_your_round() {
     ctx("ana.testnet", 0, 1002);
     let id = r.enter(0);
     ctx("bob.testnet", 0, 1003);
-    r.finish(id, true, None);
+    r.finish(id, true, None, None);
 }
 
 #[test]
@@ -155,51 +155,155 @@ fn a_late_round_is_lost() {
     ctx("ana.testnet", 0, 1002);
     let id = r.enter(0);
     ctx("bob.testnet", 0, 1002 + 3601);
-    r.finish(id, true, None);
+    r.finish(id, true, None, None);
     assert_eq!(r.player(&acc("ana.testnet")).wins, 0);
 }
 
-#[test]
-fn library_stakes() {
+fn ctx_at(who: &str, deposit: u128, ts_secs: u64, height: u64, seed: u8) {
+    let mut b = VMContextBuilder::new();
+    b.current_account_id(acc("realm.testnet"))
+        .predecessor_account_id(acc(who))
+        .attached_deposit(NearToken::from_yoctonear(deposit))
+        .block_timestamp(ts_secs * 1_000_000_000)
+        .block_height(height)
+        .random_seed([seed; 32]);
+    testing_env!(b.build());
+}
+
+fn funded_library() -> Realm {
     let mut r = realm();
-    ctx("ana.testnet", NEAR, 1001);
-    let a = r.stake();
-    let pool = r.pool;
-    ctx("ana.testnet", 0, 1002);
-    assert!(r.finish(a, true, Some(80)).is_some(), "a win hands the stake back");
-    assert_eq!(r.pool, pool, "and takes nothing from the crown pool");
-    ctx("ana.testnet", NEAR, 1003);
-    let b = r.stake();
-    ctx("ana.testnet", 0, 1004);
-    assert!(r.finish(b, false, None).is_none());
-    assert_eq!(r.pool, pool + NEAR, "a lost stake goes to the crown");
-    assert_eq!(r.player(&acc("ana.testnet")).halls_won, 1 << 8);
+    ctx("owner.testnet", 10 * NEAR, 1000);
+    r.fund_library();
+    r
+}
+
+/// Stake, then bid `count` of the face you hold most of (or `face` if given), from a later block with `seed`.
+fn wager(r: &mut Realm, who: &str, stake: u128, more: u8, seed: u8) -> (u64, Value) {
+    ctx_at(who, stake, 1001, 10, 3);
+    let id = r.stake();
+    let cup = r.cup(id).unwrap();
+    let face = (1..=6u8).max_by_key(|f| cup.mine.iter().filter(|&&d| d == *f).count()).unwrap();
+    let have = cup.mine.iter().filter(|&&d| d == face).count() as u8;
+    ctx_at(who, 0, 1002, 11, seed);
+    let out = r.finish(id, false, None, Some((have + more, face)));
+    (id, out)
 }
 
 #[test]
-fn library_first_win_pays_no_bonus() {
+fn the_library_settles_the_bid_itself() {
+    let mut r = funded_library();
+    let bank = r.bank();
+    let (id, out) = wager(&mut r, "ana.testnet", NEAR / 10, 1, 9);
+    assert!(r.cup(id).is_none(), "the cup is cleared");
+    let won = out["won"].as_bool().unwrap();
+    // The result is the chain's: recount it from both cups.
+    let face = out["bid"][1].as_u64().unwrap();
+    let count = out["bid"][0].as_u64().unwrap();
+    let all: Vec<u64> = out["mine"].as_array().unwrap().iter().chain(out["his"].as_array().unwrap()).map(|v| v.as_u64().unwrap()).collect();
+    let shown = all.iter().filter(|&&d| d == face).count() as u64;
+    assert_eq!(shown, out["shown"].as_u64().unwrap());
+    assert_eq!(won, shown >= count);
+    let pays = library_pays(NEAR / 10, 1);
+    if won {
+        assert_eq!(out["paid"], json!(U128(pays)));
+        assert_eq!(r.bank(), bank - (pays - NEAR / 10));
+        assert_ne!(r.player(&acc("ana.testnet")).halls_won & (1 << LIBRARY), 0);
+    } else {
+        assert_eq!(r.bank(), bank + NEAR / 10);
+        assert_eq!(r.player(&acc("ana.testnet")).halls_won & (1 << LIBRARY), 0);
+    }
+}
+
+#[test]
+fn a_reported_win_counts_for_nothing_in_the_library() {
+    let mut r = funded_library();
+    let bank = r.bank();
+    ctx_at("ana.testnet", NEAR / 10, 1001, 10, 3);
+    let id = r.stake();
+    ctx_at("ana.testnet", 0, 1002, 11, 4);
+    let out = r.finish(id, true, Some(100), None);
+    assert_eq!(out["won"], false, "no bid: the stake is lost whatever the client says");
+    assert_eq!(r.bank(), bank + NEAR / 10);
+    assert_eq!(r.player(&acc("ana.testnet")).halls_won, 0);
+}
+
+#[test]
+fn the_odds_are_fair_less_five_percent() {
+    // Exact counts of 7776 rolls: at least k of a face among five dice.
+    for k in 1..=5u32 {
+        let n = (0..7776u32)
+            .filter(|&x| (0..5).filter(|i| (x / 6u32.pow(*i)) % 6 == 0).count() as u32 >= k)
+            .count() as u128;
+        assert_eq!(n, LIBRARY_ODDS[k as usize - 1]);
+    }
+    let fair = mul_div(NEAR, 7776, 4651);
+    assert_eq!(library_pays(NEAR, 1), fair - fair / 20);
+    // Over many seeds, wins land near the stated odds.
+    let mut wins = 0;
+    for seed in 0..=255u8 {
+        let mut r = funded_library();
+        if wager(&mut r, "ana.testnet", NEAR / 100, 1, seed).1["won"] == true {
+            wins += 1;
+        }
+    }
+    let p = wins as f64 / 256.0;
+    assert!((p - 4651.0 / 7776.0).abs() < 0.1, "won {wins} of 256");
+}
+
+#[test]
+#[should_panic(expected = "a later block")]
+fn haseeb_rolls_in_a_later_block() {
+    let mut r = funded_library();
+    ctx_at("ana.testnet", NEAR / 10, 1001, 10, 3);
+    let id = r.stake();
+    let cup = r.cup(id).unwrap();
+    r.finish(id, false, None, Some((cup.mine.iter().filter(|&&d| d == 2).count() as u8 + 1, 2)));
+}
+
+#[test]
+#[should_panic(expected = "can't cover")]
+fn the_bank_must_cover_the_bid() {
+    let mut r = funded_library();
+    wager(&mut r, "ana.testnet", NEAR, 3, 9);
+}
+
+#[test]
+#[should_panic(expected = "stake 0.01 to 1 NEAR")]
+fn stakes_are_limited() {
+    let mut r = funded_library();
+    ctx("ana.testnet", 2 * NEAR, 1001);
+    r.stake();
+}
+
+#[test]
+fn a_late_library_round_is_lost() {
+    let mut r = funded_library();
+    let bank = r.bank();
+    ctx_at("ana.testnet", NEAR / 10, 1001, 10, 3);
+    let id = r.stake();
+    ctx_at("bob.testnet", 0, 1001 + 3601, 99, 4);
+    assert_eq!(r.finish(id, false, None, Some((5, 6)))["won"], false);
+    assert_eq!(r.bank(), bank + NEAR / 10);
+}
+
+#[test]
+#[should_panic(expected = "toll")]
+fn the_gate_takes_a_toll() {
     let mut r = realm();
-    ctx("bo.testnet", NEAR, 1001);
-    let lost = r.stake();
-    ctx("bo.testnet", 0, 1002);
-    r.finish(lost, false, None);
-    let pool = r.pool;
-    // A script could report a win for every fresh account, so a first win can't pay from the pool any more.
-    ctx("ana.testnet", NEAR, 1003);
-    let a = r.stake();
-    ctx("ana.testnet", 0, 1004);
-    assert!(r.finish(a, true, Some(60)).is_some());
-    assert_eq!(r.pool, pool);
+    ctx("ana.testnet", 0, 1001);
+    r.seal(0);
 }
 
 fn sealed_up_to_mint(r: &mut Realm, who: &str) {
-    ctx(who, 0, 1001);
+    ctx(who, GATE_TOLL, 1001);
+    let pool = r.pool;
     r.seal(0);
+    assert_eq!(r.pool, pool + GATE_TOLL, "the toll goes to the crown");
     ctx(who, NEAR, 1002);
     r.buy(2, None);
     ctx(who, 0, 1003);
     let id = r.enter(2);
-    r.finish(id, true, Some(50));
+    r.finish(id, true, Some(50), None);
     r.seal(1);
 }
 
@@ -406,13 +510,13 @@ fn the_crown_goes_to_the_house_with_most_favour() {
     ctx("ana.testnet", 0, 1002);
     for _ in 0..3 {
         let id = r.enter(4);
-        r.finish(id, true, Some(100));
+        r.finish(id, true, Some(100), None);
     }
     ctx("bob.testnet", NEAR, 1003);
     r.buy(1, None);
     ctx("bob.testnet", 0, 1004);
     let id = r.enter(1);
-    r.finish(id, false, None);
+    r.finish(id, false, None, None);
     let pool = r.pool;
     assert!(pool > 0);
     ctx("bob.testnet", 0, 1000 + 3600);
@@ -440,7 +544,7 @@ fn an_unclaimed_crown_rolls_into_the_next() {
     r.buy(4, None);
     ctx("ana.testnet", 0, 1002);
     let id = r.enter(4);
-    r.finish(id, false, None);
+    r.finish(id, false, None, None);
     let pool = r.pool;
     ctx("ana.testnet", 0, 1000 + 3600);
     assert_eq!(r.end_season(), Some(4));
@@ -460,7 +564,7 @@ fn a_closed_crown_cant_be_claimed() {
     r.buy(4, None);
     ctx("ana.testnet", 0, 1002);
     let id = r.enter(4);
-    r.finish(id, false, None);
+    r.finish(id, false, None, None);
     ctx("ana.testnet", 0, 1000 + 3600);
     r.end_season();
     ctx("ana.testnet", 0, 1000 + 7300);

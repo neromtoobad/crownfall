@@ -8,7 +8,7 @@ import { useSyncExternalStore, type FC } from 'react';
 import { ledger, note, pay, playBurn } from '../realm/ledger.ts';
 import { emitPlay, hush, hushed, isAction, play, takePressed } from '../realm/play.ts';
 import { LIBRARY, hallHouse, roomOf, type GameId, type Room } from '../realm/rooms.ts';
-import { enterHall, finishHall, held } from '../chain/game.ts';
+import { LIB_STAKE, enterHall, finishHall, held, library, type Library } from '../chain/game.ts';
 import { onChain } from '../chain/near.ts';
 
 export interface Result {
@@ -19,6 +19,8 @@ export interface Result {
   line: string;
   /** How good the win was, 0..1: scales the payout between 1 and 4 NEAR. */
   grade?: number;
+  /** In the Library on NEAR: what the contract paid (NEAR), the round already settled by the bid. */
+  paid?: number;
 }
 
 export interface GameDef {
@@ -59,6 +61,10 @@ export const session = {
   busy: false,
   /** NEAR put on the Library table this round (0 when Haseeb stood you the game). */
   staked: 0,
+  /** This round is on NEAR (its entry burned or staked there). */
+  live: false,
+  /** On NEAR, in the Library: the bank, the odds and your five dice, rolled on chain when you staked. */
+  lib: undefined as Library | undefined,
   /** Esc was pressed mid-round: leaving needs a second Esc (until this time, ms). */
   leaving: 0,
 };
@@ -87,14 +93,18 @@ export function beginRound() {
   if (session.busy) return;
   session.chainRound = undefined;
   session.leaving = 0;
-  session.staked = r.house === LIBRARY && (onChain() || !session.free) ? def.entry : 0;
+  session.staked = r.house === LIBRARY ? (onChain() ? LIB_STAKE : session.free ? 0 : def.entry) : 0;
+  session.live = onChain();
+  session.lib = undefined;
   if (onChain()) {
     const lib = r.house === LIBRARY;
     if (!lib && held(r.house) < def.entry) { session.error = `You need ${def.entry} $${hallHouse(r.house).coin} for the entry.`; emitPlay(); return; }
     session.busy = true; session.error = ''; emitPlay();
-    enterHall(r.house, lib).then((id) => {
+    enterHall(r.house, lib).then(async (id) => {
+      // Your dice were rolled on chain in the staking block: read them back before sitting down.
+      if (lib) session.lib = await library(id).catch(() => undefined);
       session.busy = false; session.chainRound = id;
-      note(lib ? `Staked 1 NEAR at ${def.name} in Qureshi's Library, on NEAR.` : `Played ${def.name} in the hall of House ${hallHouse(r.house).name}: ${def.entry} $${hallHouse(r.house).coin} burned on NEAR.`, lib ? undefined : r.house);
+      note(lib ? `Staked ${LIB_STAKE} NEAR at ${def.name} in Qureshi's Library, on NEAR.` : `Played ${def.name} in the hall of House ${hallHouse(r.house).name}: ${def.entry} $${hallHouse(r.house).coin} burned on NEAR.`, lib ? undefined : r.house);
       session.phase = 'play'; session.round++;
       takePressed();
       emitPlay();
@@ -123,17 +133,18 @@ export function endRound(res: Result) {
   if (session.phase !== 'play') return;
   const r = session.room!, h = hallHouse(r.house);
   session.result = res; session.phase = 'result';
-  // On the practice purse a hall win pays 1–4 NEAR from the house treasury. The Library works as on NEAR: a win hands
-  // the stake back (a free first game pays the stake's worth).
+  // On the practice purse a hall win pays 1–4 NEAR from the house treasury, and a Library win hands the stake back (a
+  // free first game pays the stake's worth).
   const g = Math.min(1, Math.max(0, res.grade ?? 0.5));
   session.payout = !res.won ? 0 : r.house === LIBRARY ? (session.staked === 0 ? gameDef(r.game)!.entry : session.staked) : Math.round((1 + 3 * g) * 10) / 10;
-  if (session.chainRound !== undefined) {
-    // On NEAR the round is closed on chain. The chain can't see the game, so a win moves no money and no favour (the
-    // entry's burn already was the favour): it marks the hall won for the seals, and in the Library hands the stake back.
+  if (session.live) {
+    // On NEAR the round is closed on chain. The chain can't see a hall game, so a win moves no money and no favour
+    // (the entry's burn already was the favour): it marks the hall won for the seals. The Library's bid was already
+    // settled by the contract, which paid what it paid.
     const round = session.chainRound;
     session.chainRound = undefined;
-    session.payout = 0;
-    void finishHall(round, res.won, g).catch(() => { /* shown in the chain bar */ });
+    session.payout = r.house === LIBRARY ? res.paid ?? 0 : 0;
+    if (round !== undefined) void finishHall(round, res.won, g).catch(() => { /* shown in the chain bar */ });
   } else if (res.won) {
     ledger.favour[r.house] = (ledger.favour[r.house] ?? 0) + 1;
     const where = r.house === LIBRARY ? 'Qureshi’s Library' : `the hall of House ${h.name}`;

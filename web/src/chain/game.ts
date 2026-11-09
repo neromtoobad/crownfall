@@ -31,10 +31,15 @@ export async function sellCoin(h: number, q: number): Promise<number> {
   } catch { return 0; }
 }
 
+/** NEAR put on Haseeb's table for one wager on chain. */
+export const LIB_STAKE = 0.1;
+/** The Gate's toll: its trial is a drive the chain can't see, so its seal is paid for (it goes to the crown pool). */
+export const GATE_TOLL = 0.01;
+
 /** A hall round's entry on chain: the coin is burned and a round opened. The Library is staked through the wallet. */
 export async function enterHall(hall: number, library: boolean): Promise<number> {
   return library
-    ? Number(await walletCall<number>('Staking 1 NEAR at Haseeb’s table', 'stake', {}, 1))
+    ? Number(await walletCall<number>(`Staking ${LIB_STAKE} NEAR at Haseeb’s table`, 'stake', {}, LIB_STAKE))
     : Number(await keyCall<number>(`Burning the entry: ${fmt(units(chain.realm?.houses[hall]?.entry ?? '0'))} $${HOUSES[hall].coin}`, 'enter', { house: hall }));
 }
 
@@ -42,10 +47,30 @@ export async function finishHall(round: number, won: boolean, grade: number) {
   return keyCall('Recording the round', 'finish', { round, won, grade: Math.round(Math.max(0, Math.min(1, grade)) * 100) }, true);
 }
 
-/** Take a Warden's seal on chain (the contract checks what it can see; a seal it refuses stays a practice seal). */
+// ---------- Qureshi's Library: a wager the contract settles ----------
+
+export interface Library { bank: string; min: string; max: string; edge_bps: number; odds: number[]; of: number; cup: { mine: number[]; height: number } | null }
+export interface LibResult { round: number; won: boolean; bid?: [number, number]; mine?: number[]; his?: number[]; shown?: number; paid?: string; refunded?: string }
+/** The Library's bank and odds, and (with a round) your five dice, rolled on chain when you staked. */
+export const library = (round?: number) => view<Library>('get_library', { round: round ?? null });
+/** What a true bid pays back in all, in NEAR, when Haseeb's cup must show `need` more of the face (0 if none). */
+export const libPays = (lib: Library, stake: number, need: number) =>
+  need < 1 || need > 5 ? 0 : (stake * lib.of / lib.odds[need - 1]) * (1 - lib.edge_bps / 10_000);
+/** The chance a bid needing `need` more from Haseeb's five dice is true. */
+export const libChance = (lib: Library, need: number) => (need < 1 ? 1 : need > 5 ? 0 : lib.odds[need - 1] / lib.of);
+/** Bid on the table: the contract rolls Haseeb's dice from this block and pays a true bid. */
+export const bidLibrary = (round: number, count: number, face: number) =>
+  keyCall<LibResult>('Haseeb lifts his cup', 'finish', { round, won: false, bid: [count, face] });
+
+/** Take a Warden's seal on chain (the contract checks what it can see; a seal it refuses stays a practice seal). The
+ *  Gate's seal takes its toll through the wallet. */
 export async function takeSeal(i: number) {
   if (!onChain()) return false;
-  try { await keyCall('Sealing it on NEAR', 'seal', { seal: i }, true); return true; } catch { return false; }
+  try {
+    if (i === 0) await walletCall(`Paying the Gate’s toll: ${GATE_TOLL} NEAR`, 'seal', { seal: 0 }, GATE_TOLL);
+    else await keyCall('Sealing it on NEAR', 'seal', { seal: i }, true);
+    return true;
+  } catch { return false; }
 }
 
 // ---------- The Ashen Throne: seasons ----------

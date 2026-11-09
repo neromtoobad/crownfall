@@ -170,7 +170,7 @@ export const MISSIONS: Mission[] = [
   },
   {
     id: 'library', title: 'Read the Table', giver: G('qureshi'), needs: () => hasSeal('Mint'), seal: 'Library',
-    brief: () => 'Go into Qureshi’s Library and beat Haseeb at Liar’s Dice (stake 1 NEAR).',
+    brief: () => (onChain() ? 'Go into Qureshi’s Library and win a bid against Haseeb’s cup (0.1 NEAR, settled by the contract).' : 'Go into Qureshi’s Library and beat Haseeb at Liar’s Dice (stake 1 NEAR).'),
     intro: () => [
       { who: 'Haseeb Qureshi', text: 'Sit down. Every lord in Vael bluffs. Very few do it well, and I’ve watched most of them try.' },
       { who: 'Haseeb Qureshi', text: 'Liar’s Dice. Five each, under the cup. Come inside, sit across from me, and beat me. Then the Library’s seal is yours.' },
@@ -368,7 +368,7 @@ function pass(m: Mission) {
   const live = onChain();
   if (live && m.seal) void takeSeal(SEALS.indexOf(m.seal));
   else pay(m.reward.near, `Mission passed: ${m.title}`);
-  story.card = { kind: 'passed', title: m.seal ? `Seal of the ${m.seal}` : 'Mission passed', sub: `${m.title}${live ? (m.seal ? ' · sealed on NEAR' : '') : ` · +${m.reward.near} NEAR`} · renown +${m.reward.renown}${m.reward.title ? ` · ${m.reward.title}` : ''}`, t: performance.now() };
+  story.card = { kind: 'passed', title: m.seal ? `Seal of the ${m.seal}` : 'Mission passed', sub: `${m.title}${live ? (m.seal ? ` · sealed on NEAR${m.seal === 'Gate' ? ' (0.01 NEAR toll)' : ''}` : '') : ` · +${m.reward.near} NEAR`} · renown +${m.reward.renown}${m.reward.title ? ` · ${m.reward.title}` : ''}`, t: performance.now() };
   emitPlay();
 }
 export function fail(reason: string) {
