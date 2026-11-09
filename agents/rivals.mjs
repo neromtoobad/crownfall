@@ -25,7 +25,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 const CONTRACT = process.env.CONTRACT ?? 'crownfall-vael.testnet';
-const RPC = process.env.RPC ?? 'https://rpc.testnet.fastnear.com';
+// Public RPCs rate-limit; views fail over between them and back off, sends use the first.
+const RPCS = (process.env.RPC ?? 'https://rpc.testnet.fastnear.com,https://rpc.testnet.near.org').split(',').map((s) => s.trim()).filter(Boolean);
+const RPC = RPCS[0];
 const PORT = Number(process.env.PORT ?? 8787);
 const DATA = process.env.DATA_DIR ?? join(process.cwd(), 'data');
 const DRY = process.env.DRY === '1';
@@ -55,11 +57,27 @@ const MIN_STAKE = 0.02;
 // ---------- Chain ----------
 
 const b64 = (s) => Buffer.from(s).toString('base64');
+const sleep = (ms) => new Promise((f) => setTimeout(f, ms));
+const busyRpc = (e) => /429|rate limit|too many|timeout|aborted|fetch failed|ECONN|5\d\d/i.test(String(e?.message ?? e));
+let rpcAt = 0; // which RPC answered last
 async function rpc(method, params) {
-  const r = await fetch(RPC, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }), signal: AbortSignal.timeout(12_000) });
-  const j = await r.json();
-  if (j.error) throw new Error(JSON.stringify(j.error).slice(0, 200));
-  return j.result;
+  let last;
+  for (let a = 0; a < 2 * RPCS.length; a++) {
+    const url = RPCS[(rpcAt + a) % RPCS.length];
+    try {
+      const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }), signal: AbortSignal.timeout(12_000) });
+      if (r.status === 429 || r.status >= 500) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
+      if (j.error) throw new Error(JSON.stringify(j.error).slice(0, 200));
+      rpcAt = (rpcAt + a) % RPCS.length;
+      return j.result;
+    } catch (e) {
+      last = e;
+      if (!busyRpc(e)) throw e; // a real error (a panic, a missing account): no point retrying
+      await sleep(400 * (a + 1));
+    }
+  }
+  throw last;
 }
 async function view(method, args = {}) {
   const r = await rpc('query', { request_type: 'call_function', finality: 'optimistic', account_id: CONTRACT, method_name: method, args_base64: b64(JSON.stringify(args)) });
@@ -162,7 +180,11 @@ async function decide(r, race, purse) {
 const plan = new Map();   // race n → Map(rival id → { at, done })
 const whipped = new Map(); // `${n}:${id}` → whips cracked
 const busy = new Set();
-const once = async (key, fn) => { if (busy.has(key)) return; busy.add(key); try { await fn(); } finally { busy.delete(key); } };
+// Runs fn unless the same key is still running. Never rejects: a failed step is logged and tried again next tick.
+const once = async (key, fn) => {
+  if (busy.has(key)) return; busy.add(key);
+  try { await fn(); } catch (e) { console.warn(`[${key}]`, String(e?.message ?? e).slice(0, 160)); } finally { busy.delete(key); }
+};
 let settledAt = { n: -1, t: 0 };
 
 async function onBet(r, race) {
@@ -183,11 +205,14 @@ async function onBet(r, race) {
   } catch (e) { log({ who: r.id, kind: 'error', race: race.n, error: `bet: ${e.message}` }); }
 }
 
+const baseCache = new Map(); // the race as it stands, shared by every rival's whip check
 /** Would one more whip for `house` now gain it a place? Asked of the contract's own sim. */
 async function whipGains(race, house, startedMs) {
   const tick = Math.floor((Date.now() + 1500 - startedMs) / 100) + 1; // a block and a bit of latency
   if (tick < 2) return false;
-  const base = await view('preview_race', { seed: race.seed, laps: race.laps, whips: race.whips });
+  const bk = `${race.n}:${race.seed}:${race.whips.length}`;
+  const base = baseCache.get(bk) ?? baseCache.set(bk, await view('preview_race', { seed: race.seed, laps: race.laps, whips: race.whips })).get(bk);
+  if (baseCache.size > 20) baseCache.delete(baseCache.keys().next().value);
   const plus = await view('preview_race', { seed: race.seed, laps: race.laps, whips: [...race.whips, [tick, house]] });
   return plus.order.indexOf(house) < base.order.indexOf(house) ? { from: base.order.indexOf(house) + 1, to: plus.order.indexOf(house) + 1 } : false;
 }
@@ -321,4 +346,5 @@ async function loop() {
   if (ticks++ % 15 === 0) { void refreshPurses(); for (const r of RIVALS) void once(`tribute:${r.id}`, () => tribute(r)); }
   setTimeout(loop, 2000);
 }
+process.on('unhandledRejection', (e) => console.warn('[unhandled]', String(e?.message ?? e).slice(0, 160)));
 void loop();
