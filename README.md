@@ -78,7 +78,7 @@ right are Use, Run, Chariot and Map. Each hall game has its own touch buttons.
 | Track | What Crownfall does for it | Where to look |
 |---|---|---|
 | **Memecoins With Mechanics** | Eight house coins, each on its own curve (price = NEAR reserve ÷ supply). The meme is the mechanic: the only way to play a house's hall game is to burn its coin, so every round played lifts the price for everyone who holds that house. Whips at the races burn coin too, and 2% of every trade feeds the crown pool. The coins are NEP-245 multi-tokens (`mt_transfer`, `mt_transfer_call`, `mt_balance_of`, with `mt_mint`/`mt_burn`/`mt_transfer` events), so they move between wallets and contracts like any NEAR token. | [`chain/src/lib.rs`](chain/src/lib.rs) (`buy`, `sell`, `enter`, `whip`, the `mt_*` methods), [`web/src/chain/game.ts`](web/src/chain/game.ts), the Mint panel in [`web/src/PlayHud.tsx`](web/src/PlayHud.tsx) |
-| **Games With Real Economies** | A 3D realm with nine hall games, a story of seven trials and chariot racing. Rounds cost real coin, the Library is staked in NEAR, and races take pari-mutuel NEAR bets settled by running the race inside the contract. The chain stays in the background: one wallet connect and a game key, then rounds, seals and whips sign without popups. | [`web/src/games/`](web/src/games/) (`host.ts` is the round lifecycle), [`web/src/realm/missions.ts`](web/src/realm/missions.ts), [`chain/src/sim.rs`](chain/src/sim.rs) + [`web/src/realm/raceSim.ts`](web/src/realm/raceSim.ts), [`web/src/chain/near.ts`](web/src/chain/near.ts) (game key) |
+| **Games With Real Economies** | A 3D realm with nine hall games, a story of seven trials and chariot racing. Rounds cost real coin, the Library is staked in NEAR, and races take pari-mutuel NEAR bets settled by running the race inside the contract. Four rival agents with their own wallets bet, whip and burn against you, deciding with a model on NEAR AI Cloud. The chain stays in the background: one wallet connect and a game key, then rounds, seals and whips sign without popups. | [`agents/rivals.mjs`](agents/rivals.mjs), [`web/src/games/`](web/src/games/) (`host.ts` is the round lifecycle), [`web/src/realm/missions.ts`](web/src/realm/missions.ts), [`chain/src/sim.rs`](chain/src/sim.rs) + [`web/src/realm/raceSim.ts`](web/src/realm/raceSim.ts), [`web/src/chain/near.ts`](web/src/chain/near.ts) (game key) |
 | **Social Money** | Each house is a community with a shared treasury and reward rules. The crown pool collects 2% of every trade and every lost stake. When the season ends the house its players lifted highest is crowned, and the pool is split among that house's players by the favour they earned. | [`chain/src/lib.rs`](chain/src/lib.rs) (`add_favour`, `end_season`, `claim_crown`), the crown test in [`chain/src/tests.rs`](chain/src/tests.rs) |
 | **Open Innovation** | A memecoin market you walk through: the price chart is a living realm, trading is a trip to the Mint, and the leaderboard is a throne. The race that pays out is the same deterministic race you watch, checked bit for bit between Rust and TypeScript. | The whole repo; the race check is `sim_matches_js` in [`chain/src/tests.rs`](chain/src/tests.rs) |
 
@@ -257,6 +257,27 @@ flowchart LR
   account, outgrows it. Sending coin to someone who holds none of it takes 0.0025 NEAR for their new holding. The
   race book stays at 100 races.
 
+**The rivals.** Four agent players live in the realm with their own testnet wallets, sworn to four houses:
+Ser Odo Vane of Thorne ([`cf-odo-vael.testnet`](https://testnet.nearblocks.io/address/cf-odo-vael.testnet)), Lady
+Isolde Marr of Marrow ([`cf-isolde-vael.testnet`](https://testnet.nearblocks.io/address/cf-isolde-vael.testnet)), Old
+Bram of Halloway ([`cf-bram-vael.testnet`](https://testnet.nearblocks.io/address/cf-bram-vael.testnet)) and Nell the
+Fox of Sorrel ([`cf-nell-vael.testnet`](https://testnet.nearblocks.io/address/cf-nell-vael.testnet)). They use the
+same contract calls you do, and the contract treats them like any other player
+([`agents/rivals.mjs`](agents/rivals.mjs)):
+
+- **Bets.** While betting is open, each rival asks a model on NEAR AI Cloud whether to back a team and with how much,
+  given the cup, the laps, the pools so far, its own house, its purse and its last six races. The answer is held to
+  that rival's limits (Bram never stakes more than 0.08 NEAR). Without a model key it falls back to its own fixed
+  rule and says so.
+- **Whips.** Once the race starts and its seed is on chain, a rival that backed a team replays the race with the
+  contract's `preview_race`, with and without one more whip, and cracks its whip only when it gains a place.
+- **Chores.** Ser Odo calls each race, starts it at the off if no browser has, and settles it, so the Hippodrome runs
+  on chain when nobody is watching. Winners collect.
+- **Tribute.** About every twenty minutes each rival burns one entry in its own house's hall: favour for that house
+  in the race for the Ashen Throne. It closes those rounds as lost, since it didn't play them.
+
+The race card lists the rivals' moves in the current race with their reasons, each one linked to its transaction.
+
 **The game key.** When you connect, your wallet adds one function-call key, limited to this contract and to `enter`,
 `finish`, `seal`, `whip`, `call_race`, `start_race`, `settle`, `claim_race`, `claim_crown`, `end_season` and `sell`, with a
 0.5 NEAR gas allowance. It can't send your NEAR anywhere except back to you. Anything that spends NEAR goes through
@@ -303,6 +324,7 @@ Views: `get_realm`, `get_account`, `get_race`, `get_ticket`, `get_season`, `get_
 | `web/src/games/` | The nine hall games and the round lifecycle (`host.ts`) |
 | `web/src/chain/` | NEAR: wallet (near-connect), game key, contract calls, race polling |
 | `chain/` | The contract, the race simulation and its tests |
+| `agents/` | The four rival agents (`rivals.mjs`) and their feed |
 | `contract/`, `sim/` | An earlier design (houses, decrees, councils), kept for reference and not deployed |
 | `design/` | Design notes, the story, playtest audits |
 | `docs/shots/` | The screenshots in this README |
@@ -328,6 +350,13 @@ cd chain && cargo near build non-reproducible-wasm
 The live contract was upgraded in place from its first version: `migrate` keeps every holding, round, ticket and
 season, reads old players and races as they are, and moves each over the next time it's touched (a test writes the
 first version's state and upgrades it).
+
+The rivals run with Node 20 or later. They read their keys from `~/.near-credentials/testnet` (or `RIVAL_<ID>_KEY`)
+and their model key from `NEARAI_API_KEY`; `DRY=1` decides and logs without sending anything.
+
+```bash
+cd agents && npm install && DRY=1 node rivals.mjs
+```
 
 The web app talks to `crownfall-vael.testnet` by default. Set `VITE_CONTRACT` to point it at your own deployment
 ([`web/src/chain/near.ts`](web/src/chain/near.ts)).

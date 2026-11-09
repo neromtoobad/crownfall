@@ -8,6 +8,7 @@ import { M, back, betsOpen, crack, laneLen, laneR, live as liveRace, odds, setWa
 import { CONTRACT, EXPLORER, onChain, useChain } from './chain/near.ts';
 import { WHIP_COINS, WHIP_SECS, bet, callRace, collect, whip, winnings } from './chain/races.ts';
 import { held } from './chain/game.ts';
+import { rivalOf, useRivals, type Feed } from './chain/rivals.ts';
 import { fmt } from './realm/ledger.ts';
 
 const nth = (n: number) => n + (['th', 'st', 'nd', 'rd'][n % 100 > 10 && n % 100 < 14 ? 0 : n % 10] ?? 'th');
@@ -17,6 +18,7 @@ export function RaceHud() {
   const live = useRace();
   const c = useChain();
   const [stake, setStake] = useState(0.1);
+  const feed = useRivals();
   const [, tick] = useState(0);
   useEffect(() => { const i = setInterval(() => tick((n) => n + 1), 500); return () => clearInterval(i); }, []);
   const r = live.race;
@@ -60,6 +62,7 @@ export function RaceHud() {
         {won && backed !== undefined && (
           <div className="slip">{won.house === backed ? `Your practice slip on ${HOUSES[backed].name} pays ${odds(r, won).toFixed(2)}×.` : `${HOUSES[backed].name} finished ${nth(order.findIndex((x) => x.house === backed) + 1)}. Next race soon.`}</div>
         )}
+        <Rivals feed={feed} onNear />
         <div className="foot">
           <span className="mono">seed {r.seed.toString(16).padStart(8, '0')}</span>
           <span className="on-near"><NearMark size={12} /> {onChain() ? 'A practice heat. The races on NEAR come back on the track after it.' : 'Practice slips. Connect a wallet (top left) to bet on NEAR testnet.'}</span>
@@ -110,12 +113,39 @@ export function RaceHud() {
       {cv.settled && cv.ticket?.claimed && <div className="slip">Collected. The winnings are in your wallet.</div>}
       {cv.settled && myBet > 0 && pays === 0 && win !== undefined && <div className="slip">{HOUSES[win].name} won; your teams didn’t. Your stake stays in the pot for the winners.</div>}
       {cv.settled && <button className="ghost" disabled={busy} onClick={() => void callRace().catch(() => {})}>Call the next race</button>}
+      <Rivals feed={feed} race={cv.n} />
       <div className="foot">
         <span className="mono">{cv.startMs !== undefined ? `seed ${cv.seed.toString(16).padStart(8, '0')}` : 'seed not drawn yet'} · {cv.whips.length} whips</span>
         <span className="on-near"><NearMark size={12} /> Seeded by the block that starts it, after betting closes, so no bettor could know the result. The contract runs this same race to settle it. <a href={`${EXPLORER}/address/${CONTRACT}`} target="_blank" rel="noreferrer">contract</a></span>
       </div>
       <button className="ghost leave" onClick={() => setWatch(false)}>Leave the stands</button>
     </aside>
+  );
+}
+
+/** The rival agents' moves in this race (or, from a practice heat, in the latest race on NEAR), with their reasons. */
+function Rivals({ feed, race, onNear }: { feed?: Feed; race?: number; onNear?: boolean }) {
+  if (!feed?.events.length) return null;
+  const last = race ?? Math.max(...feed.events.map((e) => e.race ?? -1));
+  const moves = feed.events.filter((e) => e.race === last && (e.kind === 'bet' || e.kind === 'sit' || e.kind === 'whip' || e.kind === 'claim')).slice(-8);
+  if (!moves.length) return null;
+  return (
+    <div className="rivals">
+      <div className="eyebrow">{onNear ? `Meanwhile on NEAR, race ${last}: the rivals` : 'The rivals in this race'} · <span title={feed.model ? `Their bets are decided by ${feed.model} on NEAR AI Cloud` : 'Their bets follow fixed rules'}>agents with their own wallets</span></div>
+      <ul>
+        {moves.map((e) => {
+          const who = rivalOf(feed, e.who);
+          const what = e.kind === 'bet' ? `${e.near} NEAR on ${HOUSES[e.house ?? 0].name}` : e.kind === 'whip' ? `whips ${HOUSES[e.house ?? 0].name}` : e.kind === 'claim' ? `collects ${e.near} NEAR` : 'sits this one out';
+          return (
+            <li key={`${e.t}-${e.who}-${e.kind}`}>
+              <i style={{ background: HOUSES[who?.house ?? 0].colors[0] }} />
+              <span><b>{who?.name ?? e.who}</b> {e.tx && e.tx !== 'dry' ? <a href={`${EXPLORER}/txns/${e.tx}`} target="_blank" rel="noreferrer">{what}</a> : what}
+                {e.why && <small>“{e.why}”</small>}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 

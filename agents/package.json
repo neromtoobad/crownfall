@@ -1,0 +1,9 @@
+{
+  "name": "crownfall-rivals",
+  "private": true,
+  "type": "module",
+  "description": "Crownfall's rival agents: four NEAR testnet wallets that bet, whip, burn and keep the Hippodrome running.",
+  "scripts": { "start": "node rivals.mjs" },
+  "engines": { "node": ">=20" },
+  "dependencies": { "near-api-js": "^7.4.0" }
+}

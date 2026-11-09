@@ -603,3 +603,10 @@ html.touch .sealbar span { display: none; }
 .throne-past b { font: 600 15px/1.35 var(--serif); color: #f6e7c4; }
 .throne-list { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .throne-list .item { padding: 7px 10px; }
+
+.race-card .rivals { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line, rgba(0,0,0,.12)); }
+.race-card .rivals ul { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.race-card .rivals li { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; line-height: 1.3; }
+.race-card .rivals li i { flex: none; width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; }
+.race-card .rivals li a { color: inherit; text-decoration: underline; text-decoration-color: var(--near); text-underline-offset: 2px; }
+.race-card .rivals li small { display: block; font: italic 13px/1.3 var(--serif); color: var(--ink-2); }
