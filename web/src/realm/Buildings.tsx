@@ -1,5 +1,6 @@
 // Castles, towns, the capital, the Hippodrome and the landmarks. Built from simple solids and merged per material,
 // so the whole realm is a few dozen draw calls. Generated models replace the hero pieces later.
+import { THRONE, Throne } from './Throne.tsx';
 import { useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
@@ -160,7 +161,7 @@ export function Buildings({ fallen = [] as number[] }) {
     const y = ground(cx + 30, cz) - 0.4;
     walls(cx + 20, cz, y, 100, 16, 12, stone, kit);
     kit.hall.push({ x: cx + 35, y, z: cz - 40, ry: 0, sx: 66, sy: 47, sz: 23 }); // the Ashen Throne's hall
-    town(cx + 20, cz + 10, 22, 92, 300, 5, kit, undefined, [[...LANDMARKS[4].pos, 36], [...LANDMARKS[5].pos, 19], [...ROOKERY, 13]]);
+    town(cx + 20, cz + 10, 22, 92, 300, 5, kit, undefined, [[...LANDMARKS[4].pos, 36], [...LANDMARKS[5].pos, 19], [...ROOKERY, 13], [THRONE.x, THRONE.z + 2, 15]]);
     stone.push(...bridgeGeometry()); // the Lazzarin Bridge and every other river crossing
     // NEAR colours over Emberfall: a flag on every tower of the city wall, a banner down every stretch of it,
     // and two great banners on the throne hall.
@@ -192,6 +193,7 @@ export function Buildings({ fallen = [] as number[] }) {
       addCircle(mx + 18 * sn, mz + 18 * c, 2.6); // the coin's plinth
       addCircle(...LANDMARKS[5].pos, 13.6);
       addCircle(...LANDMARKS[3].pos, 3.6);
+      addCircle(THRONE.x, THRONE.z, THRONE.r); // the Ashen Throne's dais
     }
     return { stone: merge(stone), roofs: merge(roofs), gold: merge(gold), dome: merge(dome), slate: merge(slate), dark: merge(dark), poles, kit, nearFlags, nearBanners };
   }, []);
@@ -213,6 +215,7 @@ export function Buildings({ fallen = [] as number[] }) {
       <Props name="tower" items={kit.tower} />
       <Props name="keep" items={kit.keep} />
       <Props name="throne-hall" items={kit.hall} />
+      <Throne />
       <mesh geometry={gold} castShadow><meshStandardMaterial color="#c9a24a" metalness={0.75} roughness={0.32} /></mesh>
       <mesh geometry={slate} castShadow receiveShadow><meshStandardMaterial color="#4a4d55" roughness={0.75} flatShading /></mesh>
       <mesh geometry={dark}><meshStandardMaterial color="#2a221c" roughness={0.9} /></mesh>

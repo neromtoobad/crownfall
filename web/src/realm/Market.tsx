@@ -1,6 +1,7 @@
 // Town dressing made in Blender (design/blender/props.py → public/env/props/*.glb): market stalls round Mint
 // Square and outside every house's walls, wells, carts and hay by the roads, signposts where roads leave a town,
 // and the rookery tower. Plus loose crates and barrels that go flying when you run or drive into them.
+import { THRONE } from './Throne.tsx';
 import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
@@ -108,13 +109,14 @@ function layout() {
     }
   }
 
+  const byThrone = (x: number, z: number) => Math.hypot(x - THRONE.x, z - THRONE.z) < THRONE.r + 8;
   // Along the roads: a cart and some hay every so often, signposts where a road leaves its towns.
   for (const r of ROADS) {
     const c = roadCurve(r), len = c.getLength();
     for (let u = 60; u < len - 60; u += 110 + rnd() * 60) {
       const t = u / len, p = c.getPointAt(t), tan = c.getTangentAt(t), side = rnd() < 0.5 ? 1 : -1;
       const x = p.x + tan.z * 8 * side, z = p.z - tan.x * 8 * side;
-      if (!clear(x, z, 3.6, 5)) continue;
+      if (!clear(x, z, 3.6, 5) || byThrone(x, z)) continue;
       const ry = Math.atan2(tan.x, tan.z) + (rnd() - 0.5) * 0.4;
       put('cart', x, z, ry); addBox(x, z, SIZE.cart[0] * M * 0.9, SIZE.cart[2] * M * 0.9, ry);
       if (rnd() < 0.7) {
@@ -124,7 +126,7 @@ function layout() {
     }
     for (const t of [0.06, 0.94]) {
       const p = c.getPointAt(t), tan = c.getTangentAt(t), x = p.x + tan.z * 5.5, z = p.z - tan.x * 5.5;
-      if (!clear(x, z, 0.8, 4)) continue;
+      if (!clear(x, z, 0.8, 4) || byThrone(x, z)) continue;
       put('signpost', x, z, Math.atan2(tan.x, tan.z) + Math.PI / 2); addCircle(x, z, 0.35);
     }
   }

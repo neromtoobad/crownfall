@@ -21,7 +21,7 @@ export const STABLES = arena(0, -(ARENA.R + 24));
 export const PLACES: Place[] = [
   { id: 'mint', verb: 'Trade', what: 'at the Warwick Mint counter', panel: 'mint', x: mx + Math.sin(MINT_RY) * 20, z: mz + Math.cos(MINT_RY) * 20, r: 8 },
   { id: 'door-lib', verb: 'Enter', what: "Qureshi's Library", panel: 'enter', house: LIBRARY, x: libDoor().out[0], z: libDoor().out[1], r: 5 },
-  { id: 'council', verb: 'Enter', what: 'the hall of the Ashen Throne', panel: 'council', x: 35, z: -23, r: 11 },
+  { id: 'council', verb: 'Enter', what: 'the hall of the Ashen Throne', panel: 'council', x: 35, z: 3, r: 8 },
   { id: 'rookery', verb: 'Send', what: 'a raven from the rookery', panel: 'raven', x: 77, z: -37, r: 8 },
   { id: 'gate', verb: 'Muster', what: 'a march at the Gershuni Gate', panel: 'march', x: gx, z: gz, r: 12 },
   { id: 'stables', verb: 'Race', what: 'drive a chariot, or bet from the stands', panel: 'race', x: STABLES[0], z: STABLES[1], r: 14 },
