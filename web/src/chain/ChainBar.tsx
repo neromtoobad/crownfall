@@ -1,7 +1,7 @@
 // Top left in play: play on NEAR testnet (connect), who you are, and what is being signed right now.
 import { useEffect, useState } from 'react';
 import { NearMark } from '../NearMark.tsx';
-import { CONTRACT, EXPLORER, chain, connect, disconnect, onChain, refresh, restore, useChain } from './near.ts';
+import { CONTRACT, EXPLORER, chain, disconnect, onChain, openSignIn, refresh, restore, useChain } from './near.ts';
 import { startRacePolling } from './races.ts';
 import { TOUCH, wallet } from '../realm/play.ts';
 
@@ -28,11 +28,11 @@ export function ChainBar() {
     <div className="chainbar">
       {c.account ? (
         <div className="who" title={`Signed in on NEAR testnet. Realm contract: ${CONTRACT}`}>
-          <NearMark size={13} /><b>{c.account.length > 22 ? `${c.account.slice(0, 10)}…${c.account.slice(-9)}` : c.account}</b><span>testnet</span>
+          <NearMark size={13} /><b>{c.account.length > 22 ? `${c.account.slice(0, 10)}…${c.account.slice(-9)}` : c.account}</b><span>{c.via === 'google' ? 'Google · testnet' : 'testnet'}</span>
           <button onClick={() => void disconnect()} aria-label="Sign out">×</button>
         </div>
       ) : (
-        <button className="connect practice" onClick={() => void connect()}><span className="tag">Practice</span><NearMark size={13} />{TOUCH ? 'Connect wallet' : 'Connect wallet to play on NEAR'}</button>
+        <button className="connect practice" onClick={() => openSignIn()}><span className="tag">Practice</span><NearMark size={13} />{TOUCH ? 'Sign in' : 'Sign in to play on NEAR'}</button>
       )}
       {c.busy && <div className="busy"><i />{c.busy}…</div>}
       {!c.busy && c.error && <div className="err">{c.error}</div>}

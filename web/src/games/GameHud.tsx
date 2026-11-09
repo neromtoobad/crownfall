@@ -7,7 +7,7 @@ import { beginRound, gameDef, quitGame, session } from './host.ts';
 import { sigilURL } from '../realm/sigils.ts';
 import { useMemo } from 'react';
 import { LIB_STAKE, buyCoin, held } from '../chain/game.ts';
-import { onChain, useChain } from '../chain/near.ts';
+import { onChain, signsHere, useChain } from '../chain/near.ts';
 
 export function GameHud() {
   const p = usePlay();
@@ -42,7 +42,7 @@ export function GameHud() {
       <div className="entry">
         {live
           ? (lib
-            ? <><b>Stake: {LIB_STAKE} NEAR on the table, on NEAR.</b><span>Your wallet asks for it. The contract rolls your five dice from that block; you make one bid, and Haseeb’s five are rolled from the block that takes it. A true bid pays fair odds less 5% from the Library’s bank; a short one goes to the bank. No browser can report this win.</span></>
+            ? <><b>Stake: {LIB_STAKE} NEAR on the table, on NEAR.</b><span>{signsHere() ? 'It signs from your NEAR account here.' : 'Your wallet asks for it.'} The contract rolls your five dice from that block; you make one bid, and Haseeb’s five are rolled from the block that takes it. A true bid pays fair odds less 5% from the Library’s bank; a short one goes to the bank. No browser can report this win.</span></>
             : <><b>Entry: {fmt(def.entry)} ${h.coin}, burned on NEAR.</b><span>{short ? `You hold ${fmt(held(room.house))}: buy some first.` : `You hold ${fmt(held(room.house))}.`} The burn raises ${h.coin} for every holder and counts as favour with House {h.name}.</span></>)
           : lib
           ? (session.free ? <><b>Haseeb stands you the first game.</b><span>Win it and he pays you {def.entry} NEAR. After this the stake is {def.entry} NEAR: a win hands it back.</span></> : <><b>Stake: {def.entry} NEAR on the table.</b><span>Win and it comes back to you. Lose and Haseeb keeps it.</span></>)

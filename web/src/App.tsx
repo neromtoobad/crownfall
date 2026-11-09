@@ -69,7 +69,7 @@ function Game() {
         <NearPill />
         <div className="top-actions">
           {mode === 'map' && <button className="ghost" onClick={() => { setPicked(undefined); setFocus({ x: 0, z: 60, dist: 980 }); }}>The whole realm</button>}
-          <button className="seat-btn" onClick={() => setMode('play')}>{account ? 'Take your seat' : 'Connect wallet & take your seat'}</button>
+          <button className="seat-btn" onClick={() => setMode('play')}>{account ? 'Take your seat' : 'Sign in & take your seat'}</button>
         </div>
       </header>}
       {h && (

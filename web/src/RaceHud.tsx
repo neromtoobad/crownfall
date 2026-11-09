@@ -65,7 +65,7 @@ export function RaceHud() {
         <Rivals feed={feed} onNear />
         <div className="foot">
           <span className="mono">seed {r.seed.toString(16).padStart(8, '0')}</span>
-          <span className="on-near"><NearMark size={12} /> {onChain() ? 'A practice heat. The races on NEAR come back on the track after it.' : 'Practice slips. Connect a wallet (top left) to bet on NEAR testnet.'}</span>
+          <span className="on-near"><NearMark size={12} /> {onChain() ? 'A practice heat. The races on NEAR come back on the track after it.' : 'Practice slips. Sign in (top left) to bet on NEAR testnet.'}</span>
         </div>
         <button className="ghost leave" onClick={() => setWatch(false)}>Leave the stands</button>
       </aside>
@@ -110,7 +110,7 @@ export function RaceHud() {
       )}
       {whipOpen && whipHouse === undefined && <div className="slip">Back a team to crack the whip for it. A whip burns {WHIP_COINS} of that house’s coin.</div>}
       {cv.settled && pays > 0 && !cv.ticket?.claimed && <button className="whip" disabled={busy} onClick={() => void collect().catch(() => {})}>Collect {pays.toFixed(3)} NEAR</button>}
-      {cv.settled && cv.ticket?.claimed && <div className="slip">Collected. The winnings are in your wallet.</div>}
+      {cv.settled && cv.ticket?.claimed && <div className="slip">Collected. The winnings are in your NEAR account.</div>}
       {cv.settled && myBet > 0 && pays === 0 && win !== undefined && <div className="slip">{HOUSES[win].name} won; your teams didn’t. Your stake stays in the pot for the winners.</div>}
       {cv.settled && <button className="ghost" disabled={busy} onClick={() => void callRace().catch(() => {})}>Call the next race</button>}
       <Rivals feed={feed} race={cv.n} />

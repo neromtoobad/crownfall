@@ -16,7 +16,8 @@ Ride a chariot across Vael, walk into any house's hall and play its game, back a
 seven seals that put you on the Ashen Throne. Every round you play burns that house's coin on NEAR, so playing is what
 moves the price.
 
-- **Play:** https://crownfall.nerom.site. It runs on NEAR testnet, and you can try it without a wallet.
+- **Play:** https://crownfall.nerom.site. It runs on NEAR testnet. Sign in with Google or just a name and the realm
+  makes you a real NEAR account: no wallet, no seed phrase, no popups.
 - **Contract:** [`crownfall-vael.testnet`](https://testnet.nearblocks.io/address/crownfall-vael.testnet) (Rust, near-sdk 5, [`chain/`](chain/src/lib.rs))
 - Built for the NEAR HACKATHON, November 2026, in four tracks ([see below](#hackathon-tracks)). The same team's
   other entry is [Parallax](https://github.com/neromtoobad/parallax), a company of AI agents that bid for work. The two
@@ -35,21 +36,22 @@ moves the price.
 
 ## For judges: try it in ten minutes
 
-You need a NEAR **testnet** account with about 2 testnet NEAR. If you don't have one, make one in
-[MyNearWallet (testnet)](https://testnet.mynearwallet.com/) or Meteor, and top it up at
-[near-faucet.io](https://near-faucet.io/). Every call below is on testnet; you can watch them land on
+You don't need a wallet. Sign in with Google (or type a name) and the realm makes you a NEAR testnet account,
+`yourname-x7k2.vael.testnet`, with 0.5 testnet NEAR in it, enough for every step below. Its key stays in your
+browser, so nothing ever pops up. A NEAR testnet wallet works too, from the same dialog. Every call below is on
+testnet; you can watch them land on
 [`crownfall-vael.testnet`](https://testnet.nearblocks.io/address/crownfall-vael.testnet) as you go.
 
 | Do this | You'll see |
 |---|---|
 | **1.** Open https://crownfall.nerom.site | The realm of Vael from above: eight keeps, the capital, and a live race card bottom left. |
-| **2.** Press **Connect wallet & take your seat**, connect your wallet, pick a house, a lord and a name, press **Enter** | Your wallet asks once to add a game key: a function-call key limited to this contract with a 0.5 NEAR gas allowance. You land in the capital, Emberfall, with your account in the pill top left. |
+| **2.** Press **Sign in & take your seat**, then **Sign in**: **Continue with Google**, or type a name and press **Make my lord**. Pick a house, a lord and a name, press **Enter** | A few seconds later you're a real account on NEAR testnet (`ada-x7k2.vael.testnet`, or `ada.vael.testnet` for a name), shown in the pill top left. You land in the capital, Emberfall. (With a wallet instead, it asks once to add a game key: a function-call key limited to this contract with a 0.5 NEAR gas allowance.) |
 | **3.** Walk to the Mint just ahead (the counter with the big coin) and press **E**: **Trade** | The eight house coins with price, supply, reserve and coin burned, read from the contract. |
-| **4.** Pick a house's coin, type `0.1`, press **Buy with 0.1 NEAR** | Your wallet confirms `buy`. The coin lands in your purse (top right), and the pill top left shows **✓ … on NEAR**, linked to the transaction. |
+| **4.** Pick a house's coin, type `0.1`, press **Buy with 0.1 NEAR** | `buy` signs right there, with no popup (a wallet would ask). The coin lands in your purse (top right), and the pill top left shows **✓ … on NEAR**, linked to the transaction. |
 | **5.** Press **M** for the map and tap that house's keep to set a waypoint. Press **C** to whistle for your chariot and **E** to take the reins | The radar draws the road route to the keep. **W** to drive, **A**/**D** to steer, **Space** to whip. |
-| **6.** At the keep's lit door press **E** (**Enter**), walk to the table, press **E** (**Play**), then **Play** on the card | No wallet popup: the game key signs `enter`, which burns 400 of that house's coin. Back at the Mint, that coin's burned count has gone up, and its price with it. |
+| **6.** At the keep's lit door press **E** (**Enter**), walk to the table, press **E** (**Play**), then **Play** on the card | No popup: `enter` is signed in the browser, and it burns 400 of that house's coin. Back at the Mint, that coin's burned count has gone up, and its price with it. |
 | **7.** Play the round (each game shows its controls) | The result is reported with `finish`. The burn was already your favour with the house; a win marks the hall won for the Wardens' seals and goes on the house's tally of wins. (In Qureshi's Library the contract rolls the dice and decides the win itself: see [What happens on NEAR](#what-happens-on-near).) |
-| **8.** Drive to the Mumtaz Hippodrome (**H** on the radar). At the stables press **E** (**Race**), then **Watch and bet on NEAR**. While the teams parade, choose a stake and press **Back** on one | Your wallet confirms `bet` in NEAR. At the off the game key starts the race (`start_race`): only now is its seed drawn, from that block. In the first 40 seconds of the run, **Crack the whip** burns 200 of your team's coin (`whip`). |
+| **8.** Drive to the Mumtaz Hippodrome (**H** on the radar). At the stables press **E** (**Race**), then **Watch and bet on NEAR**. While the teams parade, choose a stake and press **Back** on one | `bet` puts your NEAR on that team (a wallet would ask to confirm). At the off the browser starts the race (`start_race`): only now is its seed drawn, from that block. In the first 40 seconds of the run, **Crack the whip** burns 200 of your team's coin (`whip`). |
 | **9.** Watch to the line | The card reads **Settled on NEAR**: `settle` re-ran the race inside the contract ([`sim.rs`](chain/src/sim.rs)) and got the same finish you watched. A winning ticket shows **Collect** (`claim_race`). |
 | **10.** Press **J** for the Seal Book and follow the objective line to the Wardens | Each trial you finish writes a seal to your account with `seal`; the contract checks the ones it can see (coin bought, hall wins, a bet at the Hippodrome). |
 | **11.** Enter the hall of the Ashen Throne (**♛** on the radar) | Every house ranked by this season's favour (yours is marked), the season clock and the crown pool, all read from the contract. |
@@ -67,8 +69,8 @@ up, anyone there can press **Crown the house with the most favour** (`end_season
 last season's result is at the top with **Take your share** (`claim_crown`) if you played for the crowned house. What
 you'd be paid is read first with `get_crown`, so the button shows the exact amount.
 
-**No wallet?** Press **Practice without a wallet** in the seat picker: everything plays on a practice purse kept in
-your browser, and nothing goes on chain.
+**Rather not sign in?** Press **Practice without signing in** in the seat picker: everything plays on a practice
+purse kept in your browser, and nothing goes on chain.
 
 **On a phone.** Turn it sideways. The left thumb is the joystick, drag on the right to look, and the buttons on the
 right are Use, Run, Chariot and Map. Each hall game has its own touch buttons.
@@ -78,7 +80,7 @@ right are Use, Run, Chariot and Map. Each hall game has its own touch buttons.
 | Track | What Crownfall does for it | Where to look |
 |---|---|---|
 | **Memecoins With Mechanics** | Eight house coins, each on its own curve (price = NEAR reserve ÷ supply). The meme is the mechanic: the only way to play a house's hall game is to burn its coin, so every round played lifts the price for everyone who holds that house. Whips at the races burn coin too, and 2% of every trade feeds the crown pool. The coins are NEP-245 multi-tokens (`mt_transfer`, `mt_transfer_call`, `mt_balance_of`, with `mt_mint`/`mt_burn`/`mt_transfer` events), so they move between wallets and contracts like any NEAR token. | [`chain/src/lib.rs`](chain/src/lib.rs) (`buy`, `sell`, `enter`, `whip`, the `mt_*` methods), [`web/src/chain/game.ts`](web/src/chain/game.ts), the Mint panel in [`web/src/PlayHud.tsx`](web/src/PlayHud.tsx) |
-| **Games With Real Economies** | A 3D realm with nine hall games, a story of seven trials and chariot racing. Rounds cost real coin, the Library is a NEAR wager whose dice the contract rolls and settles itself, and races take pari-mutuel NEAR bets settled by running the race inside the contract. Four rival agents with their own wallets bet, whip and burn against you, deciding with a model on NEAR AI Cloud. The chain stays in the background: one wallet connect and a game key, then rounds, seals and whips sign without popups. | [`agents/rivals.mjs`](agents/rivals.mjs), [`web/src/games/`](web/src/games/) (`host.ts` is the round lifecycle), [`web/src/realm/missions.ts`](web/src/realm/missions.ts), [`chain/src/sim.rs`](chain/src/sim.rs) + [`web/src/realm/raceSim.ts`](web/src/realm/raceSim.ts), [`web/src/chain/near.ts`](web/src/chain/near.ts) (game key) |
+| **Games With Real Economies** | A 3D realm with nine hall games, a story of seven trials and chariot racing. Rounds cost real coin, the Library is a NEAR wager whose dice the contract rolls and settles itself, and races take pari-mutuel NEAR bets settled by running the race inside the contract. Four rival agents with their own wallets bet, whip and burn against you, deciding with a model on NEAR AI Cloud. The chain stays in the background: sign in with Google (or just a name) and the realm makes you a NEAR account whose key lives in your browser, so buying, betting, rounds and whips never pop anything up. A wallet works too. | [`agents/rivals.mjs`](agents/rivals.mjs), [`web/src/games/`](web/src/games/) (`host.ts` is the round lifecycle), [`web/src/realm/missions.ts`](web/src/realm/missions.ts), [`chain/src/sim.rs`](chain/src/sim.rs) + [`web/src/realm/raceSim.ts`](web/src/realm/raceSim.ts), [`web/api/lord.ts`](web/api/lord.ts) (social login), [`web/src/chain/near.ts`](web/src/chain/near.ts) (signing) |
 | **Social Money** | Each house is a community with a shared treasury and reward rules. The crown pool collects 2% of every trade and the Gate's toll. When the season ends the house its players lifted highest is crowned, and the pool is split among that house's players by the favour they earned. | [`chain/src/lib.rs`](chain/src/lib.rs) (`add_favour`, `end_season`, `claim_crown`), the crown test in [`chain/src/tests.rs`](chain/src/tests.rs) |
 | **Open Innovation** | A memecoin market you walk through: the price chart is a living realm, trading is a trip to the Mint, and the leaderboard is a throne. The race that pays out is the same deterministic race you watch, checked bit for bit between Rust and TypeScript. | The whole repo; the race check is `sim_matches_js` in [`chain/src/tests.rs`](chain/src/tests.rs) |
 
@@ -170,17 +172,18 @@ Each game opens on a card that tells you what the round costs and what a win pay
 
 ## How to play
 
-1. Open the site, look over the realm, and press **Connect wallet & take your seat**. Connect a NEAR testnet
-   wallet, then pick a house, a lord and a name. On the way in, your wallet asks once for the game key.
+1. Open the site, look over the realm, and press **Sign in & take your seat**. Sign in with Google, or a name, or a
+   NEAR testnet wallet, then pick a house, a lord and a name.
 2. **WASD** to walk (Shift to run), **E** to talk, trade, enter and take the reins, **C** to whistle for your
    chariot, **Space** to crack the whip, **M** for the map, **J** for the Seal Book, **Esc** to pause.
    On a phone, turn it sideways: the left thumb is the joystick, drag on the right to look, and the buttons on the
    right are Use, Run, Chariot and Map.
 3. Follow the objective line at the bottom of the screen. The Seal Book (J) lists every trial and every hall.
 
-With the game key in place, hall rounds, whips and seals are signed without a popup. Buying coin, staking and betting
-NEAR still go through your wallet. No wallet yet? **Practice without a wallet** plays on a practice purse kept in your
-browser, and the pill at the top left connects one whenever you're ready.
+Signed in with Google or a name, everything signs in your browser with no popup. With a wallet, hall rounds, whips
+and seals sign with the game key, and buying coin, staking and betting NEAR go through the wallet. Not ready to sign
+in? **Practice without signing in** plays on a practice purse kept in your browser, and the pill at the top left
+signs you in whenever you're ready.
 
 <table>
   <tr>
@@ -202,9 +205,10 @@ flowchart LR
   subgraph Browser["Browser (web/)"]
     G[Hall games<br/>and the realm]
     S[Race drawing<br/>raceSim.ts]
-    K[Game key<br/>function-call only]
+    K[Your key<br/>Google / name lord, or a wallet's game key]
   end
-  W[Your NEAR wallet]
+  L[Sign-in service<br/>web/api/lord.ts] -- "makes name.vael.testnet" --> K
+  W[A NEAR wallet, if you use one]
   subgraph C["crownfall-vael.testnet (chain/)"]
     M[8 coin curves<br/>buy · sell]
     H[Hall rounds<br/>enter · finish · stake]
@@ -248,8 +252,8 @@ flowchart LR
 - **The seals** are kept per account, and the contract checks what it can see. The Mint seal needs a coin bought and
   a round played. The Bridge, Lighthouse and Library seals each need a won round in that hall. The Hippodrome seal
   needs a bet on one of the contract's races. The Throne needs the other six seals and wins in three halls. The
-  Gate's trial is a drive, which the chain can't see, so its seal is paid for instead: a 0.01 NEAR toll, through your
-  wallet, to the crown pool.
+  Gate's trial is a drive, which the chain can't see, so its seal is paid for instead: a 0.01 NEAR toll from your
+  account to the crown pool.
 - **The Hippodrome.** Anyone can call a race (`call_race`). Bets are pari-mutuel in NEAR for 90 seconds, and the
   race has **no seed while betting is open**: at the off, the first `start_race` (or whip, or settle) draws it from
   that block's randomness. So nobody who bet could have run the race in advance, `preview_race` included. In the
@@ -294,7 +298,24 @@ They run on Railway around the clock; their feed is public at
 (records, purses and the last 80 moves with transaction hashes). Their keys are full-access testnet keys, because
 NEAR function-call keys can't attach the deposit a bet or a coin buy needs.
 
-**The game key.** When you connect, your wallet adds one function-call key, limited to this contract and to `enter`,
+**Signing in without a wallet.** [`web/api/lord.ts`](web/api/lord.ts) is a small Vercel function that gives a player
+a real NEAR testnet account under [`vael.testnet`](https://testnet.nearblocks.io/address/vael.testnet), funded from
+that account, so the game never shows a seed phrase or a signing popup:
+
+- **Google.** Google's own button returns a signed ID token. The function checks it with Google (audience, issuer,
+  expiry), then derives the player's ed25519 key from the Google account id with an HMAC under a server secret, and
+  makes `<first name>-<4 chars>.vael.testnet` with that key and 0.5 testnet NEAR. The same Google login finds the same
+  account again on any device. Because the service can derive those keys, it is their custodian, the way a hosted
+  wallet is. That's fine for testnet play money; on mainnet the key would come from an MPC or TEE signer instead.
+- **Just a name.** The browser makes its own key and sends only the public half, with a small proof of work (about
+  a second) so a script can't empty the purse. The function makes `<name>.vael.testnet` with that key and 0.4 testnet
+  NEAR. The key never leaves the browser; lose the browser and you lose the account.
+
+Either way the account holds a full-access key in your browser, and every call, payable or not, is signed there
+([`web/src/chain/near.ts`](web/src/chain/near.ts)). The pill at the top left signs you out; the dialog offers
+**Continue as** for accounts made in this browser.
+
+**The game key.** When you connect a wallet, it adds one function-call key, limited to this contract and to `enter`,
 `finish`, `seal`, `whip`, `call_race`, `start_race`, `settle`, `claim_race`, `claim_crown`, `end_season` and `sell`, with a
 0.5 NEAR gas allowance. It can't send your NEAR anywhere except back to you. Anything that spends NEAR goes through
 your wallet.
@@ -331,6 +352,8 @@ Views: `get_realm`, `get_account`, `get_library`, `get_race`, `get_ticket`, `get
   ([`design/blender/`](design/blender/)).
 - **Chain:** Rust and near-sdk 5.30 for the contract. The web side uses near-api-js for calls and
   [near-connect](https://github.com/hot-dao/near-connect) for wallets.
+- **Sign-in:** Google Identity Services for the Google button, and a Vercel function with near-api-js that makes the
+  accounts.
 - **Hosting:** Vercel, at crownfall.nerom.site.
 
 ## Repo layout
@@ -340,7 +363,8 @@ Views: `get_realm`, `get_account`, `get_library`, `get_race`, `get_ticket`, `get
 | `web/` | The game: Vite, React, three.js via react-three-fiber |
 | `web/src/realm/` | The world: terrain, roads, keeps, halls, people, the player, races, missions |
 | `web/src/games/` | The nine hall games and the round lifecycle (`host.ts`) |
-| `web/src/chain/` | NEAR: wallet (near-connect), game key, contract calls, race polling |
+| `web/src/chain/` | NEAR: sign-in dialog, wallet (near-connect), game key, contract calls, race polling |
+| `web/api/lord.ts` | The sign-in service: Google or a name in, a funded `*.vael.testnet` account out |
 | `chain/` | The contract, the race simulation and its tests |
 | `agents/` | The four rival agents (`rivals.mjs`) and their feed |
 | `contract/`, `sim/` | An earlier design (houses, decrees, councils), kept for reference and not deployed |
@@ -378,6 +402,10 @@ cd agents && npm install && DRY=1 node rivals.mjs
 
 The web app talks to `crownfall-vael.testnet` by default. Set `VITE_CONTRACT` to point it at your own deployment
 ([`web/src/chain/near.ts`](web/src/chain/near.ts)).
+
+The sign-in service runs inside the dev server too. Give it a parent account in `web/.env.local`: `VAEL_ACCOUNT`, its
+key as `VAEL_KEY`, a random `LORD_SECRET`, and `GOOGLE_CLIENT_ID` (a Google OAuth web client with your origin
+allowed) for the Google button. Without a Google client the dialog offers a name and a wallet.
 
 ## License
 

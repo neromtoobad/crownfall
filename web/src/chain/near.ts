@@ -1,10 +1,12 @@
 // Crownfall on NEAR testnet: the realm contract (chain/), a wallet to sign in with, and a game key.
 //
-// Two ways a call is signed:
-// - Payable calls (buying coin, staking in the Library, betting on a race) go through the player's wallet, which asks.
-// - Everything else (entering a hall round, finishing it, taking a seal, whipping, settling a race) is signed here with
-//   a game key: a function-call key the wallet adds once, limited to this contract and to those methods, with a 0.5 NEAR
-//   gas allowance. It can't move the player's NEAR anywhere except back to them (`sell`).
+// Two ways to sign in:
+// - A lord account (Google, or just a name): /api/lord makes a real NEAR testnet account, `<name>.vael.testnet`, whose
+//   key lives in this browser. Every call, payable or not, is signed here: no wallet, no popups.
+// - A NEAR wallet. Then payable calls (buying coin, staking in the Library, betting on a race) go through the wallet,
+//   which asks. Everything else (entering a hall round, finishing it, taking a seal, whipping, settling a race) is
+//   signed here with a game key: a function-call key the wallet adds once, limited to this contract and to those
+//   methods, with a 0.5 NEAR gas allowance. It can't move the player's NEAR anywhere except back to them (`sell`).
 import type { NearConnector } from '@hot-labs/near-connect';
 import type { KeyPairString } from 'near-api-js';
 // The wallet libraries are big; they load on first use (a connect, a restore, a signed call), not with the realm.
@@ -24,8 +26,14 @@ export interface ChainRealm { season: number; season_ends_ns: string; pool: stri
 export interface ChainMe { seals: string[]; halls_won: number[]; plays: number; wins: number; bought: boolean; raced?: boolean; houses: { coins: string; favour: string }[] }
 export interface ChainRace { n: number; seed: number; laps: number; called_ns: string; off_ns: string; started?: boolean; started_ns?: string; claimed?: string; pools: string[]; whips: [number, number][]; settled: boolean; order: number[]; finish_ms: number[]; payout: string }
 
+export type Via = 'wallet' | 'google' | 'name' | 'dev';
 export const chain = {
   account: undefined as string | undefined,
+  /** How this player signed in: a NEAR wallet, or a lord account whose key is in this browser. */
+  via: undefined as Via | undefined,
+  /** The sign-in dialog is open, and the name to suggest in it. */
+  signingIn: false,
+  signInHint: '',
   /** The game key is on the account and stored here. */
   keyed: false,
   realm: undefined as ChainRealm | undefined,
@@ -45,8 +53,11 @@ export function useChain() {
   useSyncExternalStore((f) => { subs.add(f); return () => subs.delete(f); }, () => chain.version);
   return chain;
 }
-/** On chain: a wallet is connected. Otherwise the game runs on the practice purse. */
+/** On chain: signed in. Otherwise the game runs on the practice purse. */
 export const onChain = () => !!chain.account;
+/** Open the sign-in dialog (Google, a name, or a wallet). */
+export function openSignIn(hint = '') { chain.error = ''; chain.signingIn = true; chain.signInHint = hint; emitChain(); }
+export function closeSignIn() { chain.signingIn = false; emitChain(); }
 
 // ---------- Reading ----------
 
@@ -101,12 +112,13 @@ async function getConnector() {
   if (connector) return connector;
   connector = new NearConnector({ network: NETWORK, features: { signAndSendTransaction: true, testnet: true }, providers: { testnet: RPCS } });
   connector.on('wallet:signIn', (t) => { void signedIn(t.accounts[0]?.accountId); });
-  connector.on('wallet:signOut', () => { chain.account = undefined; chain.keyed = false; chain.me = undefined; emitChain(); });
+  connector.on('wallet:signOut', () => { if (chain.via !== 'wallet') return; chain.account = undefined; chain.via = undefined; chain.keyed = false; chain.me = undefined; emitChain(); });
   return connector;
 }
 async function signedIn(account: string | undefined) {
   if (!account || account === chain.account) return;
-  chain.account = account;
+  forgetLord();
+  chain.account = account; chain.via = 'wallet'; chain.signingIn = false;
   chain.keyed = !!storedKey(account);
   emitChain();
   await refresh();
@@ -117,12 +129,15 @@ export async function connect() {
   try { await (await getConnector()).connect(); } catch (e) { chain.error = message(e); emitChain(); }
 }
 export async function disconnect() {
-  try { await (await getConnector()).disconnect(); } catch { /* already out */ }
-  chain.account = undefined; chain.keyed = false; chain.me = undefined; emitChain();
+  if (chain.via === 'wallet') { try { await (await getConnector()).disconnect(); } catch { /* already out */ } }
+  forgetLord(); lordKey = undefined;
+  chain.account = undefined; chain.via = undefined; chain.keyed = false; chain.me = undefined; emitChain();
 }
-/** A wallet signed in on an earlier visit comes back on its own. */
+/** Whoever signed in on an earlier visit (a lord account or a wallet) comes back on its own. */
 export async function restore() {
   void refresh();
+  const l = activeLord();
+  if (l && storedKey(l.account)) { await signInLord(l.account, storedKey(l.account)!, l.via); return; }
   try {
     const { accounts } = await (await getConnector()).getConnectedWallet();
     await signedIn(accounts[0]?.accountId);
@@ -142,17 +157,45 @@ function parseOutcome(o: unknown): unknown {
   try { return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(v), (c) => c.charCodeAt(0)))); } catch { return undefined; }
 }
 
-/** Dev only: play as a testnet account whose full-access key is given, with no wallet (for the headless checks). */
-let devKey: KeyPairString | undefined;
+// ---------- Lord accounts: the key is in this browser ----------
+
+const LORD = `crownfall.lord.${NETWORK}`, LORDS = `crownfall.lords.${NETWORK}`;
+export interface Lord { account: string; via: Via }
+function activeLord(): Lord | undefined { try { return JSON.parse(localStorage.getItem(LORD) ?? 'null') ?? undefined; } catch { return undefined; } }
+function forgetLord() { try { localStorage.removeItem(LORD); } catch { /* private window */ } }
+/** Lord accounts made in this browser whose keys are still here, to come back to after signing out. */
+export function knownLords(): Lord[] {
+  try { return (JSON.parse(localStorage.getItem(LORDS) ?? '[]') as Lord[]).filter((l) => storedKey(l.account)); } catch { return []; }
+}
+/** Sign in as a lord account whose full-access key we hold: every call is signed here, with no wallet. */
+export async function signInLord(account: string, key: KeyPairString, via: Via) {
+  if (chain.via === 'wallet') { try { await (await getConnector()).disconnect(); } catch { /* fine */ } }
+  try {
+    localStorage.setItem(keyName(account), key);
+    localStorage.setItem(LORD, JSON.stringify({ account, via }));
+    if (via !== 'dev') localStorage.setItem(LORDS, JSON.stringify([{ account, via }, ...knownLords().filter((l) => l.account !== account)].slice(0, 6)));
+  } catch { /* private window: works until the tab closes */ }
+  lordKey = key;
+  chain.account = account; chain.via = via; chain.keyed = true; chain.signingIn = false; chain.error = '';
+  emitChain();
+  await refresh();
+}
+/** Back in as a lord account made earlier in this browser. */
+export const continueAs = (l: Lord) => signInLord(l.account, storedKey(l.account)!, l.via);
+let lordKey: KeyPairString | undefined;
+const localKey = () => (chain.via && chain.via !== 'wallet' ? lordKey ?? (chain.account ? storedKey(chain.account) ?? undefined : undefined) : undefined);
+/** True when every call signs here, with no wallet popup. */
+export const signsHere = () => !!localKey();
 
 /** A payable call, through the wallet. `near` is attached. */
 export async function walletCall<T>(what: string, method: string, args: Record<string, unknown>, near: number): Promise<T> {
   if (!chain.account) throw new Error('connect a wallet first');
   chain.busy = what; chain.error = ''; emitChain();
   try {
-    if (import.meta.env.DEV && devKey) {
+    const lk = localKey();
+    if (lk) {
       const { Account } = await nearApi();
-      const v = await new Account(chain.account, RPCS[0], devKey).callFunction<T & object>({ contractId: CONTRACT, methodName: method, args, gas: BigInt(GAS), deposit: yocto(near) });
+      const v = await new Account(chain.account, RPCS[0], lk).callFunction<T & object>({ contractId: CONTRACT, methodName: method, args, gas: BigInt(GAS), deposit: yocto(near) });
       chain.lastTx = { what, t: Date.now() };
       void refresh();
       return v as T;
@@ -178,6 +221,7 @@ function storedKey(a: string) { try { return localStorage.getItem(keyName(a)) as
 export async function ensureKey() {
   const a = chain.account;
   if (!a) throw new Error('connect a wallet first');
+  if (localKey()) { chain.keyed = true; return; }
   const have = storedKey(a);
   if (have) {
     const { KeyPair } = await nearApi();
@@ -205,7 +249,7 @@ export async function ensureKey() {
 /** A non-payable call, signed with the game key: no wallet popup. */
 export async function keyCall<T>(what: string, method: string, args: Record<string, unknown>, quiet = false): Promise<T> {
   if (!chain.keyed) await ensureKey();
-  const a = chain.account!, sk = storedKey(a)!;
+  const a = chain.account!, sk = (localKey() ?? storedKey(a))!;
   if (!quiet) { chain.busy = what; chain.error = ''; emitChain(); }
   try {
     const { Account } = await nearApi();
@@ -218,12 +262,6 @@ export async function keyCall<T>(what: string, method: string, args: Record<stri
 }
 
 if (import.meta.env.DEV) {
-  const devLogin = async (account: string, sk: KeyPairString) => {
-    devKey = sk;
-    localStorage.setItem(keyName(account), sk);
-    chain.account = account; chain.keyed = true;
-    emitChain();
-    await refresh();
-  };
+  const devLogin = (account: string, sk: KeyPairString) => signInLord(account, sk, 'dev');
   Object.assign(window, { __chain: { chain, view, refresh, connect, keyCall, walletCall, devLogin } });
 }

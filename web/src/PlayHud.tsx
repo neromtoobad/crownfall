@@ -18,14 +18,17 @@ import { MISSIONS, WARDENS, nextHint, story } from './realm/missions.ts';
 import { ROOMS } from './realm/rooms.ts';
 import { ChainBar } from './chain/ChainBar.tsx';
 import { buyCoin, burned, claimCrown, crownOf, endSeason, favour, held, price, sellCoin, supply, type Crown } from './chain/game.ts';
-import { CONTRACT, EXPLORER, connect, ensureKey, onChain, units, useChain } from './chain/near.ts';
+import { CONTRACT, EXPLORER, ensureKey, onChain, openSignIn, signsHere, units, useChain } from './chain/near.ts';
+import { SignIn } from './chain/SignIn.tsx';
 
 export function PlayHud() {
   const p = usePlay();
   const watching = useRace().watch && !p.racing && !p.game;
+  const c = useChain();
   return (
     <>
       {p.picking && <SeatPicker />}
+      {c.signingIn && <SignIn suggest={c.signInHint || play.seat?.name} />}
       {p.mode === 'play' && p.seat && !p.picking && (
         <>
           {p.racing && <DriveHud />}
@@ -101,7 +104,7 @@ function SeatPicker() {
   // With a wallet: approve the game key now, once, so the first hall round doesn't stop for a popup. If it's
   // declined you still go in, and the key is asked for again at your first round.
   const enter = async () => {
-    if (!c.account) { void connect(); return; }
+    if (!c.account) { openSignIn(name); return; }
     setEntering(true);
     try { await ensureKey(); } catch { /* asked again later */ }
     setEntering(false);
@@ -117,11 +120,13 @@ function SeatPicker() {
         <div className={`wallet-step ${c.account ? 'on' : ''}`}>
           <NearMark size={22} />
           {c.account ? (
-            <div><b>{short(c.account)}</b><span>Connected on NEAR testnet. {c.keyed ? 'Game key ready: hall rounds, seals and whips sign without a popup.' : 'On the way in your wallet asks once for a game key, so hall rounds and seals sign without a popup.'}</span></div>
+            <div><b>{short(c.account)}</b><span>{signsHere()
+              ? 'Your NEAR testnet account. Coins, hall rounds, seals and bets all sign in this browser, with no popups.'
+              : `Connected on NEAR testnet. ${c.keyed ? 'Game key ready: hall rounds, seals and whips sign without a popup.' : 'On the way in your wallet asks once for a game key, so hall rounds and seals sign without a popup.'}`}</span></div>
           ) : (
-            <div><b>Connect a NEAR wallet first</b><span>Your coin, hall rounds, seals and race bets are kept on NEAR testnet, in the realm contract. Free testnet NEAR works.</span></div>
+            <div><b>Sign in to play on NEAR</b><span>With Google or just a name, and the realm makes you a NEAR testnet account with a little NEAR in it. No wallet needed. Your coin, rounds, seals and bets live in the realm contract.</span></div>
           )}
-          {!c.account && <button type="button" className="near-btn" onClick={() => void connect()} disabled={!!c.busy}>Connect wallet</button>}
+          {!c.account && <button type="button" className="near-btn" onClick={() => openSignIn(name)} disabled={!!c.busy}>Sign in</button>}
           {c.error && !c.busy && <p className="err">{c.error}</p>}
         </div>
         <label>Who walks for you</label>
@@ -138,8 +143,8 @@ function SeatPicker() {
         </div>
         <div className="actions">
           <button type="button" className="ghost" onClick={() => { play.picking = false; setMode('map'); }}>Not now</button>
-          {!c.account && <button type="button" className="link practise" onClick={() => { practise(); takeSeat(seat()); }}>Practice without a wallet</button>}
-          <button type="submit" className="go" disabled={entering}>{entering ? 'Approve the game key in your wallet…' : c.account ? `Enter the realm as House ${h.name}` : 'Connect wallet to enter'}</button>
+          {!c.account && <button type="button" className="link practise" onClick={() => { practise(); takeSeat(seat()); }}>Practice without signing in</button>}
+          <button type="submit" className="go" disabled={entering}>{entering ? 'Approve the game key in your wallet…' : c.account ? `Enter the realm as House ${h.name}` : 'Sign in to enter'}</button>
         </div>
       </form>
     </div>
@@ -208,8 +213,8 @@ function MintPanel() {
         <button className="ghost" disabled={held(h) <= 0 || !!c.busy} onClick={() => void sellCoin(h, held(h) / 2)}>Sell half</button>
       </div>
       {live
-        ? <p className="honest">Live on NEAR testnet: <a href={`${EXPLORER}/address/${CONTRACT}`} target="_blank" rel="noreferrer">{CONTRACT}</a>. Buying asks your wallet; selling and hall rounds use the game key.</p>
-        : <p className="honest">Practice purse in this browser. <button className="link" onClick={() => void connect()}>Play on NEAR testnet</button> to trade the real coins.</p>}
+        ? <p className="honest">Live on NEAR testnet: <a href={`${EXPLORER}/address/${CONTRACT}`} target="_blank" rel="noreferrer">{CONTRACT}</a>. {signsHere() ? 'Buying, selling and hall rounds all sign in this browser.' : 'Buying asks your wallet; selling and hall rounds use the game key.'}</p>
+        : <p className="honest">Practice purse in this browser. <button className="link" onClick={() => openSignIn()}>Play on NEAR testnet</button> to trade the real coins.</p>}
     </>
   );
 }
@@ -315,7 +320,7 @@ function Council() {
       })}</div>
       {live
         ? <p className="honest">Read from <a href={`${EXPLORER}/address/${CONTRACT}`} target="_blank" rel="noreferrer">{CONTRACT}</a>. Anyone can crown the house once the season is over (<code>end_season</code>); each player takes their own share (<code>claim_crown</code>).</p>
-        : <p className="honest">This is your practice favour, kept in this browser. <button className="link" onClick={() => void connect()}>Play on NEAR testnet</button> to see the real season and its crown pool.</p>}
+        : <p className="honest">This is your practice favour, kept in this browser. <button className="link" onClick={() => openSignIn()}>Play on NEAR testnet</button> to see the real season and its crown pool.</p>}
     </>
   );
 }
@@ -408,7 +413,7 @@ function Pause() {
           <dt>{TOUCH ? 'Whip' : 'Space'}</dt><dd>crack the whip while driving</dd>
           <dt>{TOUCH ? 'Map' : 'M'}</dt><dd>the map · click it to set a waypoint</dd>
         </dl>
-        <footer><NearPill /><span>{onChain() ? `Playing on NEAR testnet · ${CONTRACT}` : 'Practice purse. Connect a wallet (top left) to play on NEAR testnet.'}</span></footer>
+        <footer><NearPill /><span>{onChain() ? `Playing on NEAR testnet · ${CONTRACT}` : 'Practice purse. Sign in (top left) to play on NEAR testnet.'}</span></footer>
       </nav>
     </div>
   );
