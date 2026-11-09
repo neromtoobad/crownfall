@@ -5,11 +5,12 @@ import { HOUSES } from '../realm/layout.ts';
 import { note } from '../realm/ledger.ts';
 import { chain, keyCall, onChain, units, view, walletCall, type ChainRace, type ChainRealm } from './near.ts';
 
-/** Matches the contract: whips count for the first 40 s of the run; betting closes at the off. */
+/** Matches the contract: betting closes at the off; then the race is started (its seed drawn from that block), and
+ *  whips count for the first 40 s from the start. */
 export const WHIP_SECS = 40;
 export const WHIP_COINS = 200;
 
-const settling = new Set<number>(), calling = new Set<number>();
+const settling = new Set<number>(), calling = new Set<number>(), starting = new Set<number>();
 let settledSeen = { n: -1, at: 0 };
 
 export async function pollRace() {
@@ -26,13 +27,20 @@ export async function pollRace() {
     const cv: ChainRaceView = {
       n: r.n, seed: r.seed, laps: r.laps,
       offMs: Number(BigInt(r.off_ns) / 1_000_000n),
+      startMs: r.started && r.started_ns ? Number(BigInt(r.started_ns) / 1_000_000n) : undefined,
       whips: r.whips, settled: r.settled, order: r.order, finishMs: r.finish_ms,
       pools: r.pools.map(units), payout: units(r.payout),
       ticket: t ? { bets: t.bets.map(units), whips: t.whips, claimed: t.claimed } : undefined,
     };
     showChainRace(cv);
+    // At the off anyone may start the race: the contract draws its seed from that block, after the last bet.
+    if (!cv.settled && cv.startMs === undefined && Date.now() > cv.offMs + 1000 && !starting.has(cv.n) && chain.keyed) {
+      starting.add(cv.n);
+      keyCall('Starting the race: the seed is drawn on NEAR', 'start_race', { race: cv.n }, true).catch(() => {}).finally(() => void pollRace());
+    }
     // Anyone may settle a race once the whip window has closed: the contract runs it.
-    if (!cv.settled && Date.now() > cv.offMs + (WHIP_SECS + 2) * 1000 && !settling.has(cv.n) && chain.keyed) {
+    const runFrom = cv.startMs ?? cv.offMs;
+    if (!cv.settled && Date.now() > runFrom + (WHIP_SECS + 2) * 1000 && !settling.has(cv.n) && chain.keyed) {
       settling.add(cv.n);
       keyCall('Settling the race on NEAR', 'settle', { race: cv.n }, true).then(() => note(`Race ${cv.n} settled on NEAR: House ${HOUSES[cv.order[0] ?? 0]?.name ?? '?'} first.`)).catch(() => {}).finally(() => void pollRace());
     }

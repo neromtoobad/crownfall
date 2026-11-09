@@ -7,13 +7,20 @@ fn acc(s: &str) -> AccountId {
 }
 
 fn ctx(who: &str, deposit: u128, ts_secs: u64) {
+    ctx_seed(who, deposit, ts_secs, 7);
+}
+
+fn ctx_seed(who: &str, deposit: u128, ts_secs: u64, seed: u8) {
     let mut b = VMContextBuilder::new();
-    b.predecessor_account_id(acc(who))
+    b.current_account_id(acc("realm.testnet"))
+        .predecessor_account_id(acc(who))
         .attached_deposit(NearToken::from_yoctonear(deposit))
         .block_timestamp(ts_secs * 1_000_000_000)
-        .random_seed([7u8; 32]);
+        .random_seed([seed; 32]);
     testing_env!(b.build());
 }
+
+const SEED7: u32 = u32::from_le_bytes([7, 7, 7, 7]);
 
 fn realm() -> Realm {
     ctx("owner.testnet", 4 * NEAR, 1000);
@@ -59,25 +66,65 @@ fn buying_and_burning_move_the_price() {
     assert!(got > 0);
     let p1 = price(&r, 2);
     assert!(p1 > p0, "the fee left in the reserve lifts the price");
-    assert_eq!(r.pool, NEAR * 200 / 10_000);
+    // Ana's first purchase opened two records (her holding of RAM, her player record): they came out of the deposit.
+    let paid = NEAR - 2 * RECORD_FEE;
+    assert_eq!(r.pool, paid * 200 / 10_000);
+    assert!(get_logs().iter().any(|l| l.contains("\"nep245\"") && l.contains("mt_mint") && l.contains("\"ram\"")));
+    ctx("ana.testnet", NEAR, 1001);
+    let pool = r.pool;
+    r.buy(2, None);
+    assert_eq!(r.pool - pool, NEAR * 200 / 10_000, "a second purchase opens nothing and pays no record fee");
     ctx("ana.testnet", 0, 1002);
+    let held = r.holding(2, &acc("ana.testnet")).coins;
     let round = r.enter(2);
     let p2 = price(&r, 2);
     assert!(p2 > p1, "a burn lifts the price");
     assert_eq!(r.houses[2].burned, ENTRY[2]);
-    assert_eq!(r.holding(2, &acc("ana.testnet")).coins, got - ENTRY[2]);
+    assert_eq!(r.holding(2, &acc("ana.testnet")).coins, held - ENTRY[2]);
+    assert!(get_logs().iter().any(|l| l.contains("mt_burn")));
     ctx("ana.testnet", 0, 1010);
     r.finish(round, true, Some(100));
     let hold = r.holding(2, &acc("ana.testnet"));
-    assert_eq!(hold.favour, ENTRY[2] * 3, "a perfect win counts the burn three times in all");
+    assert_eq!(hold.favour, ENTRY[2], "favour is the coin burned: a reported win adds none");
+    assert_eq!(r.houses[2].wins, 1, "the win goes on the house's tally");
     let p = r.player(&acc("ana.testnet"));
     assert_eq!((p.plays, p.wins, p.halls_won), (1, 1, 1 << 2));
     // Selling all of it back pays less than was paid in (the fees), and leaves the house solvent.
     ctx("ana.testnet", 0, 1011);
     let before = r.houses[2].reserve;
-    r.sell(2, U128(hold.coins), None);
+    let _ = r.sell(2, U128(hold.coins), None);
     assert!(r.houses[2].reserve < before);
     assert!(r.houses[2].reserve > NEAR / 2, "the founders' reserve is still there");
+}
+
+#[test]
+#[should_panic(expected = "attach at least 0.01 NEAR")]
+fn a_purchase_pays_for_its_records() {
+    let mut r = realm();
+    ctx("ana.testnet", NEAR / 1000, 1001);
+    r.buy(0, None);
+}
+
+#[test]
+fn a_reported_win_moves_no_money() {
+    let mut r = realm();
+    ctx("ana.testnet", NEAR, 1001);
+    r.buy(4, None);
+    ctx("bob.testnet", NEAR, 1001);
+    r.buy(4, None);
+    // Ana reports every round won and perfect; Bob reports every round lost. Same burns, same favour.
+    for i in 0..3 {
+        ctx("ana.testnet", 0, 1002 + i);
+        let a = r.enter(4);
+        r.finish(a, true, Some(100));
+        ctx("bob.testnet", 0, 1002 + i);
+        let b = r.enter(4);
+        r.finish(b, false, None);
+    }
+    let fa = r.holding(4, &acc("ana.testnet")).favour;
+    let fb = r.holding(4, &acc("bob.testnet")).favour;
+    assert_eq!(fa, fb);
+    assert_eq!(fa, 3 * ENTRY[4]);
 }
 
 #[test]
@@ -117,11 +164,12 @@ fn library_stakes() {
     let mut r = realm();
     ctx("ana.testnet", NEAR, 1001);
     let a = r.stake();
+    let pool = r.pool;
     ctx("ana.testnet", 0, 1002);
     assert!(r.finish(a, true, Some(80)).is_some(), "a win hands the stake back");
+    assert_eq!(r.pool, pool, "and takes nothing from the crown pool");
     ctx("ana.testnet", NEAR, 1003);
     let b = r.stake();
-    let pool = r.pool;
     ctx("ana.testnet", 0, 1004);
     assert!(r.finish(b, false, None).is_none());
     assert_eq!(r.pool, pool + NEAR, "a lost stake goes to the crown");
@@ -129,52 +177,43 @@ fn library_stakes() {
 }
 
 #[test]
-fn library_first_win_doubles() {
+fn library_first_win_pays_no_bonus() {
     let mut r = realm();
-    // Bo loses one, so the crown pool holds at least a stake.
     ctx("bo.testnet", NEAR, 1001);
     let lost = r.stake();
     ctx("bo.testnet", 0, 1002);
     r.finish(lost, false, None);
     let pool = r.pool;
-    assert!(pool >= NEAR);
-    // Ana's first win: stake back plus a stake from the pool.
+    // A script could report a win for every fresh account, so a first win can't pay from the pool any more.
     ctx("ana.testnet", NEAR, 1003);
     let a = r.stake();
     ctx("ana.testnet", 0, 1004);
     assert!(r.finish(a, true, Some(60)).is_some());
-    assert_eq!(r.pool, pool - NEAR, "the first win's bonus comes out of the crown pool");
-    // Her second win: the stake back, nothing from the pool.
-    ctx("ana.testnet", NEAR, 1005);
-    let b = r.stake();
-    ctx("ana.testnet", 0, 1006);
-    assert!(r.finish(b, true, Some(60)).is_some());
-    assert_eq!(r.pool, pool - NEAR, "later wins take nothing from the pool");
+    assert_eq!(r.pool, pool);
 }
 
-#[test]
-fn library_bonus_capped_by_pool() {
-    let mut r = realm();
-    let pool = r.pool;
-    ctx("ana.testnet", NEAR, 1001);
-    let a = r.stake();
-    ctx("ana.testnet", 0, 1002);
-    assert!(r.finish(a, true, Some(60)).is_some());
-    assert_eq!(r.pool, pool.saturating_sub(NEAR.min(pool)), "the bonus never takes more than the pool holds");
+fn sealed_up_to_mint(r: &mut Realm, who: &str) {
+    ctx(who, 0, 1001);
+    r.seal(0);
+    ctx(who, NEAR, 1002);
+    r.buy(2, None);
+    ctx(who, 0, 1003);
+    let id = r.enter(2);
+    r.finish(id, true, Some(50));
+    r.seal(1);
 }
 
 #[test]
 fn seals_follow_the_story() {
     let mut r = realm();
-    ctx("ana.testnet", 0, 1001);
-    r.seal(0);
-    ctx("ana.testnet", NEAR, 1002);
-    r.buy(2, None);
+    sealed_up_to_mint(&mut r, "ana.testnet");
     ctx("ana.testnet", 0, 1003);
-    let id = r.enter(2);
-    r.finish(id, true, Some(50));
-    r.seal(1);
     r.seal(2); // the cups are Velmont's: the Bridge
+    ctx("ana.testnet", 0, 2000);
+    let n = r.call_race();
+    ctx("ana.testnet", NEAR / 10, 2001);
+    r.bet(n, 3);
+    ctx("ana.testnet", 0, 2002);
     r.seal(5);
     let p = r.player(&acc("ana.testnet"));
     assert_eq!(p.seals, 0b10_0111);
@@ -182,18 +221,59 @@ fn seals_follow_the_story() {
 }
 
 #[test]
+#[should_panic(expected = "back a team in a race")]
+fn the_hippodrome_needs_a_bet() {
+    let mut r = realm();
+    sealed_up_to_mint(&mut r, "ana.testnet");
+    ctx("ana.testnet", 0, 1004);
+    r.seal(5);
+}
+
+#[test]
 #[should_panic(expected = "win that hall's game first")]
 fn the_lighthouse_needs_a_win_at_signals() {
     let mut r = realm();
-    ctx("ana.testnet", 0, 1001);
-    r.seal(0);
-    ctx("ana.testnet", NEAR, 1002);
-    r.buy(2, None);
-    ctx("ana.testnet", 0, 1003);
-    let id = r.enter(2);
-    r.finish(id, true, None);
-    r.seal(1);
+    sealed_up_to_mint(&mut r, "ana.testnet");
     r.seal(3);
+}
+
+#[test]
+fn the_seed_is_drawn_after_betting_closes() {
+    let mut r = realm();
+    ctx("ana.testnet", 0, 2000);
+    let n = r.call_race();
+    assert_eq!(r.race(n).seed, 0, "no seed while the bets are open");
+    assert_eq!(r.get_race(n).unwrap()["started"], false);
+    ctx("ana.testnet", NEAR, 2000 + BET_SECS - 1);
+    r.bet(n, 1);
+    ctx_seed("bob.testnet", 0, 2000 + BET_SECS, 9);
+    let seed = r.start_race(n);
+    assert_eq!(seed, u32::from_le_bytes([9, 9, 9, 9]), "the seed comes from the block that starts it");
+    let race = r.race(n);
+    assert_eq!((race.seed, race.started_ns), (seed, (2000 + BET_SECS) * 1_000_000_000));
+    assert!(get_logs().iter().any(|l| l.contains("\"start\"")));
+}
+
+#[test]
+#[should_panic(expected = "betting is still open")]
+fn no_start_before_the_off() {
+    let mut r = realm();
+    ctx("ana.testnet", 0, 2000);
+    let n = r.call_race();
+    ctx("ana.testnet", 0, 2000 + BET_SECS - 1);
+    r.start_race(n);
+}
+
+#[test]
+#[should_panic(expected = "already started")]
+fn a_race_starts_once() {
+    let mut r = realm();
+    ctx("ana.testnet", 0, 2000);
+    let n = r.call_race();
+    ctx_seed("ana.testnet", 0, 2000 + BET_SECS, 1);
+    r.start_race(n);
+    ctx_seed("ana.testnet", 0, 2000 + BET_SECS + 1, 2);
+    r.start_race(n);
 }
 
 #[test]
@@ -201,38 +281,75 @@ fn a_race_from_call_to_claim() {
     let mut r = realm();
     ctx("ana.testnet", 0, 2000);
     let n = r.call_race();
-    let race = r.race(n);
-    // Find the winner first, from the same sim, so the test knows whom to back.
-    let fav = sim::run(race.seed, race.laps, &[]).order[0];
+    let fav = sim::run(SEED7, r.race(n).laps, &[]).order[0];
     let other = (fav + 1) % 8;
     ctx("ana.testnet", NEAR, 2001);
     r.bet(n, fav);
     ctx("bob.testnet", 2 * NEAR, 2002);
     r.bet(n, other);
-    // Bob whips his team once.
     ctx("bob.testnet", NEAR, 2003);
     r.buy(other, None);
+    // Bob's whip is the first call after the off: it starts the race (seed from this block) and lands on tick 1.
     ctx("bob.testnet", 0, 2000 + BET_SECS + 5);
     let tick = r.whip(n, other);
-    assert_eq!(tick, 51);
-    ctx("ana.testnet", 0, 2000 + BET_SECS + WHIP_SECS + 1);
+    assert_eq!(tick, 1);
+    let race = r.race(n);
+    assert_eq!(race.seed, SEED7);
+    ctx("bob.testnet", 0, 2000 + BET_SECS + 7);
+    assert_eq!(r.whip(n, other), 21, "two seconds on: tick 21");
+    ctx("ana.testnet", 0, 2000 + BET_SECS + 5 + WHIP_SECS);
     let order = r.settle(n);
-    let expect = sim::run(race.seed, race.laps, &[sim::Whip { tick: 51, house: other }]).order;
+    let expect = sim::run(SEED7, race.laps, &[sim::Whip { tick: 1, house: other }, sim::Whip { tick: 21, house: other }]).order;
     assert_eq!(order, expect, "settle runs the same race the browser draws");
     let win = order[0];
-    let total = 3 * NEAR;
+    // Two first bets, each paying a ticket out of the stake (both already had player records? Ana no, Bob no).
+    let total = 3 * NEAR - 4 * RECORD_FEE;
     let r2 = r.race(n);
-    if win == fav {
+    assert_eq!(r2.pools.iter().sum::<u128>(), total);
+    if win == fav || win == other {
         assert_eq!(r2.payout, total - total * 500 / 10_000);
-        r.claim_race(n);
-    } else if win == other {
-        ctx("bob.testnet", 0, 3000);
-        r.claim_race(n);
+        ctx(if win == fav { "ana.testnet" } else { "bob.testnet" }, 0, 3000);
+        let _ = r.claim_race(n);
+        assert_eq!(r.race(n).claimed, r2.payout, "the only backer of the winner takes the whole payout");
     } else {
         assert_eq!(r2.payout, 0, "nobody backed the winner: it all goes to the crown");
     }
     ctx("ana.testnet", 0, 4000);
     r.call_race();
+}
+
+#[test]
+fn an_unstarted_race_settles_without_whips() {
+    let mut r = realm();
+    ctx("ana.testnet", 0, 2000);
+    let n = r.call_race();
+    ctx_seed("ana.testnet", 0, 2000 + BET_SECS + WHIP_SECS, 5);
+    let order = r.settle(n);
+    assert_eq!(order, sim::run(u32::from_le_bytes([5, 5, 5, 5]), r.race(n).laps, &[]).order);
+}
+
+#[test]
+#[should_panic(expected = "the race is still on")]
+fn no_settling_inside_the_whip_window() {
+    let mut r = realm();
+    ctx("ana.testnet", 0, 2000);
+    let n = r.call_race();
+    ctx("ana.testnet", 0, 2000 + BET_SECS + 10);
+    r.start_race(n);
+    ctx("ana.testnet", 0, 2000 + BET_SECS + 10 + WHIP_SECS - 1);
+    r.settle(n);
+}
+
+#[test]
+#[should_panic(expected = "back a team in this race")]
+fn whips_need_a_ticket() {
+    let mut r = realm();
+    ctx("bob.testnet", NEAR, 1999);
+    r.buy(3, None);
+    ctx("ana.testnet", 0, 2000);
+    let n = r.call_race();
+    ctx("bob.testnet", 0, 2000 + BET_SECS + 1);
+    r.whip(n, 3);
 }
 
 #[test]
@@ -243,6 +360,42 @@ fn no_bets_after_the_off() {
     let n = r.call_race();
     ctx("ana.testnet", NEAR, 2000 + BET_SECS);
     r.bet(n, 0);
+}
+
+/// Run one race with Ana alone on `house`, settle it, and return the winner.
+fn quick_race(r: &mut Realm, t: u64, house: Option<u8>) -> (u32, u8) {
+    ctx("ana.testnet", 0, t);
+    let n = r.call_race();
+    if let Some(h) = house {
+        ctx("ana.testnet", NEAR / 10, t + 1);
+        r.bet(n, h);
+    }
+    ctx("ana.testnet", 0, t + BET_SECS + WHIP_SECS);
+    let w = r.settle(n)[0];
+    (n, w)
+}
+
+#[test]
+fn old_races_go_and_their_unclaimed_winnings_go_to_the_crown() {
+    let mut r = realm();
+    // Ana backs the team that wins race 0 and never collects.
+    let laps = CUP_LAPS[0];
+    let fav = sim::run(SEED7, laps, &[]).order[0];
+    let (n, w) = quick_race(&mut r, 2000, Some(fav));
+    assert_eq!((n, w), (0, fav));
+    let payout = r.race(0).payout;
+    assert!(payout > 0);
+    let mut t = 3000;
+    for _ in 1..RACE_KEEP {
+        quick_race(&mut r, t, None);
+        t += 200;
+    }
+    assert!(r.get_race(0).is_some(), "race 0 is still in the book");
+    let pool = r.pool;
+    ctx("ana.testnet", 0, t);
+    r.call_race();
+    assert!(r.get_race(0).is_none(), "the call of race 100 deleted race 0");
+    assert_eq!(r.pool, pool + payout, "and its unclaimed winnings went to the crown");
 }
 
 #[test]
@@ -269,14 +422,193 @@ fn the_crown_goes_to_the_house_with_most_favour() {
     ctx("ana.testnet", 0, 1000 + 3601);
     let s = r.get_season(1).unwrap();
     assert_eq!(s.pool.0, pool);
-    // The view says what the claim will pay: all of it to Ana, nothing to Bob (he played for another house).
     assert!(r.get_crown(0, "ana.testnet".parse().unwrap()).is_none());
     let c = r.get_crown(1, "ana.testnet".parse().unwrap()).unwrap();
     assert_eq!(c["crowned"], 4);
     assert_eq!(c["share"], pool.to_string());
     assert_eq!(c["claimed"], false);
     assert_eq!(r.get_crown(1, "bob.testnet".parse().unwrap()).unwrap()["share"], "0");
-    r.claim_crown(1);
+    let _ = r.claim_crown(1);
     assert_eq!(r.seasons.get(0).unwrap().claimed.0, pool);
     assert_eq!(r.get_crown(1, "ana.testnet".parse().unwrap()).unwrap()["claimed"], true);
+}
+
+#[test]
+fn an_unclaimed_crown_rolls_into_the_next() {
+    let mut r = realm();
+    ctx("ana.testnet", NEAR, 1001);
+    r.buy(4, None);
+    ctx("ana.testnet", 0, 1002);
+    let id = r.enter(4);
+    r.finish(id, false, None);
+    let pool = r.pool;
+    ctx("ana.testnet", 0, 1000 + 3600);
+    assert_eq!(r.end_season(), Some(4));
+    // Ana never claims. Season 2 ends: season 1's pool joins season 2's (nobody earned favour, so nobody is crowned
+    // and the pool waits).
+    ctx("ana.testnet", 0, 1000 + 7300);
+    assert_eq!(r.end_season(), None);
+    assert_eq!(r.pool, pool);
+    assert_eq!(r.get_crown(1, acc("ana.testnet")).unwrap()["closed"], true);
+}
+
+#[test]
+#[should_panic(expected = "claims have closed")]
+fn a_closed_crown_cant_be_claimed() {
+    let mut r = realm();
+    ctx("ana.testnet", NEAR, 1001);
+    r.buy(4, None);
+    ctx("ana.testnet", 0, 1002);
+    let id = r.enter(4);
+    r.finish(id, false, None);
+    ctx("ana.testnet", 0, 1000 + 3600);
+    r.end_season();
+    ctx("ana.testnet", 0, 1000 + 7300);
+    r.end_season();
+    let _ = r.claim_crown(1);
+}
+
+// ---------- NEP-245 ----------
+
+#[test]
+fn coins_are_multi_tokens() {
+    let mut r = realm();
+    ctx("ana.testnet", NEAR, 1001);
+    let got = r.buy(5, None).0;
+    assert_eq!(r.mt_balance_of(acc("ana.testnet"), "bull".into()).0, got);
+    assert_eq!(r.mt_balance_of(acc("ana.testnet"), "BULL".into()).0, got, "ids are case-blind");
+    assert_eq!(r.mt_supply("bull".into()).unwrap().0, r.houses[5].supply);
+    assert!(r.mt_supply("nope".into()).is_none());
+    assert_eq!(r.mt_metadata_base_by_token_id(vec!["hawk".into()])[0].as_ref().unwrap()["symbol"], "HAWK");
+    // To a new holder: 1 yocto isn't enough, the new holding needs its storage.
+    ctx("ana.testnet", RECORD_FEE, 1002);
+    r.mt_transfer(acc("bob.testnet"), "bull".into(), U128(got / 4), None, Some("for the road".into()));
+    assert!(get_logs().iter().any(|l| l.contains("mt_transfer") && l.contains("for the road")));
+    // To an existing holder: 1 yocto.
+    ctx("ana.testnet", 1, 1003);
+    r.mt_transfer(acc("bob.testnet"), "bull".into(), U128(got / 4), None, None);
+    assert_eq!(r.mt_batch_balance_of(acc("bob.testnet"), vec!["bull".into(), "owl".into()]), vec![U128(got / 4 * 2), U128(0)]);
+    assert_eq!(r.holding(5, &acc("bob.testnet")).favour, 0, "favour stays with the one who burned");
+    // Bob can burn what he was sent.
+    ctx("bob.testnet", 0, 1004);
+    r.enter(5);
+}
+
+#[test]
+#[should_panic(expected = "attach 0.0025 NEAR")]
+fn a_new_holder_needs_storage() {
+    let mut r = realm();
+    ctx("ana.testnet", NEAR, 1001);
+    let got = r.buy(5, None).0;
+    ctx("ana.testnet", 1, 1002);
+    r.mt_transfer(acc("bob.testnet"), "bull".into(), U128(got), None, None);
+}
+
+#[test]
+#[should_panic(expected = "attach 1 yoctoNEAR")]
+fn a_transfer_needs_a_yocto() {
+    let mut r = realm();
+    ctx("ana.testnet", NEAR, 1001);
+    let got = r.buy(5, None).0;
+    ctx("bob.testnet", NEAR, 1001);
+    r.buy(5, None);
+    ctx("ana.testnet", 0, 1002);
+    r.mt_transfer(acc("bob.testnet"), "bull".into(), U128(got), None, None);
+}
+
+#[test]
+fn a_transfer_call_returns_what_isnt_used() {
+    let mut r = realm();
+    ctx("ana.testnet", NEAR, 1001);
+    let got = r.buy(1, None).0;
+    ctx("ana.testnet", RECORD_FEE, 1002);
+    let _ = r.mt_transfer_call(acc("shop.testnet"), "boar".into(), U128(1000), None, None, "".into());
+    assert_eq!(r.mt_balance_of(acc("shop.testnet"), "boar".into()).0, 1000);
+    // The shop used 600 and hands 400 back.
+    let mut b = VMContextBuilder::new();
+    b.current_account_id(acc("realm.testnet")).predecessor_account_id(acc("realm.testnet"));
+    testing_env!(
+        b.build(),
+        near_sdk::test_vm_config(),
+        near_sdk::RuntimeFeesConfig::test(),
+        Default::default(),
+        vec![near_sdk::PromiseResult::Successful(near_sdk::serde_json::to_vec(&vec![U128(400)]).unwrap())]
+    );
+    let used = r.mt_resolve_transfer(vec![acc("ana.testnet")], acc("shop.testnet"), vec!["boar".into()], vec![U128(1000)], None);
+    assert_eq!(used, vec![U128(600)]);
+    assert_eq!(r.mt_balance_of(acc("shop.testnet"), "boar".into()).0, 600);
+    assert_eq!(r.mt_balance_of(acc("ana.testnet"), "boar".into()).0, got - 600);
+}
+
+// ---------- Storage and the upgrade ----------
+
+/// Every record a deposit pays for fits in RECORD_FEE, even for the longest account name NEAR allows.
+#[test]
+fn records_fit_their_fee() {
+    let long = format!("{}.testnet", "a".repeat(56));
+    let bytes = (RECORD_FEE / env::storage_byte_cost().as_yoctonear()) as u64;
+    let mut r = realm();
+    ctx("ana.testnet", 0, 1999);
+    let n = r.call_race();
+    r.races2.flush();
+    ctx(&long, NEAR, 2000);
+    let before = env::storage_usage();
+    r.buy(3, None);
+    r.holdings.flush();
+    r.players2.flush();
+    let grew = env::storage_usage() - before;
+    assert!(grew <= 2 * bytes, "buy opened two records in {grew} bytes");
+    ctx(&long, NEAR, 2001);
+    let before = env::storage_usage();
+    r.bet(n, 2);
+    r.tickets.flush();
+    r.races2.flush();
+    r.players2.flush();
+    let grew = env::storage_usage() - before;
+    assert!(grew <= bytes, "a ticket took {grew} bytes");
+}
+
+#[test]
+fn the_first_version_upgrades_in_place() {
+    // Write the first version's state as it is on testnet: a player, a race with its seed drawn at the call.
+    ctx("owner.testnet", 0, 1000);
+    let mut players: LookupMap<AccountId, PlayerV1> = LookupMap::new(Key::Players);
+    players.insert(acc("ana.testnet"), PlayerV1 { seals: 0b11, halls_won: 1 << 2, plays: 2, wins: 1, bought: true });
+    players.flush();
+    let mut races: Vector<RaceV1> = Vector::new(Key::Races);
+    races.push(RaceV1 {
+        n: 0, seed: 1234, laps: 3, called_ns: 0, off_ns: 900 * 1_000_000_000, pools: [0; HOUSES], whips: vec![],
+        settled: false, order: vec![], finish_ms: vec![], payout: 0,
+    });
+    races.flush();
+    let old = RealmV1 {
+        owner: acc("owner.testnet"),
+        houses: (0..HOUSES).map(|_| HouseV1 { reserve: NEAR / 4, supply: 180_000 * COIN, burned: 0, rounds: 0, favour: 0, fav_season: 1 }).collect(),
+        holdings: LookupMap::new(Key::Holdings),
+        players,
+        rounds: LookupMap::new(Key::Rounds),
+        next_round: 3,
+        races,
+        tickets: LookupMap::new(Key::Bets),
+        pool: 5,
+        season: 1,
+        season_secs: 3600,
+        season_ends_ns: 4600 * 1_000_000_000,
+        seasons: Vector::new(Key::Seasons),
+    };
+    env::state_write(&old);
+    let mut r = Realm::migrate();
+    assert_eq!((r.race_count, r.legacy_races, r.pool, r.next_round), (1, 1, 5, 3));
+    let p = r.player(&acc("ana.testnet"));
+    assert_eq!((p.seals, p.plays, p.bought), (0b11, 2, true));
+    // The old race settles with the seed it was called with.
+    ctx("ana.testnet", 0, 1000);
+    assert_eq!(r.settle(0), sim::run(1234, 3, &[]).order);
+    // A new race is a v2 race; the old player moves over when touched.
+    let n = r.call_race();
+    assert_eq!((n, r.race(n).seed), (1, 0));
+    ctx("ana.testnet", NEAR / 10, 1001);
+    r.bet(n, 0);
+    assert!(r.players2.contains_key(&acc("ana.testnet")) && !r.players.contains_key(&acc("ana.testnet")));
+    assert!(r.player(&acc("ana.testnet")).raced);
 }

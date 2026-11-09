@@ -2,13 +2,14 @@
 //   intro card (what it is, the keys, the entry) → play (the game owns the camera and the keys) → result card.
 // The entry is paid in the house's own coin and BURNED: if you hold none, the entry is bought on the house's curve
 // first. So every round played in a hall raises the price for that house's holders: play-to-burn, the memecoin
-// mechanic as gameplay. A win pays from the house treasury (the practice purse for now) and earns favour.
+// mechanic as gameplay. On NEAR the burn is the favour; a win counts for the seals. On the practice purse a win pays
+// from the house treasury.
 import { useSyncExternalStore, type FC } from 'react';
 import { ledger, note, pay, playBurn } from '../realm/ledger.ts';
 import { emitPlay, hush, hushed, isAction, play, takePressed } from '../realm/play.ts';
 import { LIBRARY, hallHouse, roomOf, type GameId, type Room } from '../realm/rooms.ts';
 import { enterHall, finishHall, held } from '../chain/game.ts';
-import { chain, onChain, units } from '../chain/near.ts';
+import { onChain } from '../chain/near.ts';
 
 export interface Result {
   won: boolean;
@@ -58,18 +59,12 @@ export const session = {
   busy: false,
   /** NEAR put on the Library table this round (0 when Haseeb stood you the game). */
   staked: 0,
-  /** A Library win's bonus on top of the stake: your first staked win there pays it back doubled. */
-  libBonus: 0,
   /** Esc was pressed mid-round: leaving needs a second Esc (until this time, ms). */
   leaving: 0,
 };
 if (import.meta.env.DEV) Object.assign(window, { __game: session });
 
 const freeKey = 'crownfall.freeRounds';
-const libKey = 'crownfall.libWon';
-/** Whether your next staked win in the Library pays double (practice purse). */
-export function libDoubles() { return !libWonBefore(); }
-function libWonBefore() { try { return localStorage.getItem(libKey) === '1'; } catch { return false; } }
 const freeUsed = (): number[] => { try { return JSON.parse(localStorage.getItem(freeKey) ?? '[]'); } catch { return []; } };
 
 /** Walk up to a hall's game and press E: the intro card. */
@@ -128,24 +123,16 @@ export function endRound(res: Result) {
   if (session.phase !== 'play') return;
   const r = session.room!, h = hallHouse(r.house);
   session.result = res; session.phase = 'result';
-  // A hall win pays 1–4 NEAR from the house treasury. The Library works as on NEAR: your first win there pays the
-  // stake back doubled, later wins hand the stake back (a free first game pays the stake's worth).
+  // On the practice purse a hall win pays 1–4 NEAR from the house treasury. The Library works as on NEAR: a win hands
+  // the stake back (a free first game pays the stake's worth).
   const g = Math.min(1, Math.max(0, res.grade ?? 0.5));
-  session.libBonus = 0;
-  if (r.house === LIBRARY && res.won && session.staked > 0) {
-    if (session.chainRound !== undefined) {
-      // The contract pays the bonus from the crown pool while it lasts, on your first Library win only.
-      if (!chain.me?.halls_won.includes(LIBRARY)) session.libBonus = Math.min(session.staked, chain.realm ? units(chain.realm.pool) : 0);
-    } else if (!libWonBefore()) { session.libBonus = session.staked; try { localStorage.setItem(libKey, '1'); } catch { /* private window */ } }
-  }
-  // A free first game (Haseeb stands you it) pays the stake's worth if you win it.
-  session.payout = !res.won ? 0 : r.house === LIBRARY ? (session.staked === 0 ? gameDef(r.game)!.entry : session.staked + session.libBonus) : Math.round((1 + 3 * g) * 10) / 10;
+  session.payout = !res.won ? 0 : r.house === LIBRARY ? (session.staked === 0 ? gameDef(r.game)!.entry : session.staked) : Math.round((1 + 3 * g) * 10) / 10;
   if (session.chainRound !== undefined) {
-    // On NEAR the round is closed on chain: a win adds favour (and in the Library hands the stake back).
+    // On NEAR the round is closed on chain. The chain can't see the game, so a win moves no money and no favour (the
+    // entry's burn already was the favour): it marks the hall won for the seals, and in the Library hands the stake back.
     const round = session.chainRound;
     session.chainRound = undefined;
     session.payout = 0;
-    if (res.won) ledger.favour[r.house] = (ledger.favour[r.house] ?? 0) + 1;
     void finishHall(round, res.won, g).catch(() => { /* shown in the chain bar */ });
   } else if (res.won) {
     ledger.favour[r.house] = (ledger.favour[r.house] ?? 0) + 1;

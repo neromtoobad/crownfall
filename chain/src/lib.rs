@@ -3,29 +3,40 @@
 //! - **Eight houses, eight coins.** Each coin's price is its house's NEAR reserve divided by its supply. Buying adds
 //!   NEAR and mints coin at that price; selling burns coin and pays NEAR back, so a house never owes more than it holds.
 //!   A 5% fee on every trade: 3 points stay in the reserve (the price rises for holders), 2 go to the crown pool.
+//!   The coins are NEP-245 multi-tokens on this contract (`mt_*`, token ids `heron`, `boar`, … `hawk`), so wallets,
+//!   other contracts and NEAR Intents can hold and move them.
 //! - **Play to burn.** Every round of a hall game burns the house's coin (`enter`). Burning shrinks supply against the
-//!   same reserve, so every round played raises the price for everyone who holds that house. Burns earn favour; a won
-//!   round earns more (`finish`).
-//! - **The Library.** Liar's Dice against Haseeb Qureshi is staked in NEAR. Your first win pays the stake back doubled
-//!   (the bonus from the crown pool, while it lasts); later wins pay the stake back. A lost stake goes to the crown pool.
-//! - **The Seven Wardens' seals** are kept per account. Bridge, Lighthouse and Library need a won round of that hall's
-//!   game recorded here; the Throne needs the other six and wins in three halls.
-//! - **The Mumtaz Hippodrome.** Races are seeded from the block, bet on in NEAR (pari-mutuel), and whipped by burning
-//!   coin. `settle` runs the race itself in the contract (`sim.rs`, the same code the browser draws), so the result is
+//!   same reserve, so every round played raises the price for everyone who holds that house. Coin burned is favour for
+//!   the house: the only favour there is.
+//! - **The Library.** Liar's Dice against Haseeb Qureshi is staked in NEAR. A win hands the stake back; a lost stake
+//!   goes to the crown pool.
+//! - **The Seven Wardens' seals** are kept per account. Mint needs a coin bought and a round played; Bridge,
+//!   Lighthouse and Library a won round of that hall's game; Hippodrome a bet on a race here; the Throne the other six
+//!   and wins in three halls.
+//! - **The Mumtaz Hippodrome.** Races are bet on in NEAR (pari-mutuel) and whipped by burning coin. A race's seed is
+//!   drawn from the block that starts it, after betting has closed, so nobody who bet could have known how it would
+//!   run. `settle` runs the race itself in the contract (`sim.rs`, the same code the browser draws), so the result is
 //!   the chain's, not a server's.
 //! - **The Ashen Throne.** When a season ends the house with the most favour is crowned, and the crown pool goes to
-//!   that house's players in proportion to their favour.
+//!   that house's players in proportion to their favour. Shares left unclaimed when the next season ends roll into
+//!   that season's pool; race winnings left unclaimed 100 races later go to the crown pool.
 //!
-//! What is NOT proven here: a hall round's result is reported by the player's own client (`finish`). A false win can
-//! only add favour on top of coin the player really burned, and can't take NEAR out. Race results and every payout
-//! are computed on chain.
+//! What is NOT proven here: a hall round's result is reported by the player's own client (`finish`). So a win moves
+//! no money and no favour: it counts for the seals and for the house's tally of wins, nothing else. NEAR only moves on
+//! what the chain itself computes: the curve, burns, races, stakes lost, and the crown.
 //!
-//! Amounts: NEAR in yoctoNEAR, coin in yocto-coin (24 decimals, ready for NEP-141).
+//! Storage: a record a player's deposit creates (an account's first holding of a coin, its player record, its ticket
+//! for a race) costs a flat 0.0025 NEAR taken from that deposit. Races older than 100 are deleted as new ones are
+//! called, so the race book doesn't grow without end.
+//!
+//! Amounts: NEAR in yoctoNEAR, coin in yocto-coin (24 decimals).
 
 use near_sdk::json_types::U128;
 use near_sdk::serde_json::{json, Value};
 use near_sdk::store::{LookupMap, Vector};
-use near_sdk::{env, near, require, AccountId, BorshStorageKey, NearToken, PanicOnDefault, Promise};
+use near_sdk::{
+    env, ext_contract, near, require, AccountId, BorshStorageKey, Gas, NearToken, PanicOnDefault, Promise, PromiseOrValue,
+};
 
 pub mod sim;
 #[cfg(test)]
@@ -38,15 +49,25 @@ pub const HOUSES: usize = 8;
 pub const LIBRARY: u8 = 8;
 const FEE_BPS: u128 = 500;
 const FEE_POOL_BPS: u128 = 200;
+/// The least NEAR a purchase takes (it pays for its records first).
+pub const MIN_BUY: u128 = NEAR / 100;
+/// Storage for one new record (a holding, a player, a ticket), taken from the deposit that creates it: 250 bytes at
+/// NEAR's 10^19 yoctoNEAR a byte. A test checks that no record, even for a 64-character account, outgrows it.
+pub const RECORD_FEE: u128 = NEAR / 400;
 /// Coin burned for one whip at the Hippodrome.
 pub const WHIP_COINS: u128 = 200 * COIN;
 pub const WHIPS_PER_RACE: u8 = 3;
 /// Betting is open this long after a race is called, then the teams are off.
 pub const BET_SECS: u64 = 90;
-/// Whips count only in the first part of the run (no race is shorter than this).
+/// Whips count only in the first part of the run (no race is shorter than this), counted from the start.
 pub const WHIP_SECS: u64 = 40;
+/// A race this many races old is deleted when a new one is called; what its winners left unclaimed goes to the crown.
+pub const RACE_KEEP: u32 = 100;
 /// A round must be finished within the hour, or it counts as lost.
 const ROUND_SECS: u64 = 3600;
+const SEC: u64 = 1_000_000_000;
+const GAS_ON_TRANSFER: Gas = Gas::from_tgas(35);
+const GAS_RESOLVE: Gas = Gas::from_tgas(15);
 
 pub const NAMES: [&str; HOUSES] = ["Ashveil", "Corrin", "Velmont", "Thorne", "Halloway", "Draven", "Marrow", "Sorrel"];
 pub const TICKERS: [&str; HOUSES] = ["HERON", "BOAR", "RAM", "ASP", "OWL", "BULL", "LYNX", "HAWK"];
@@ -68,6 +89,8 @@ enum Key {
     Races,
     Bets,
     Seasons,
+    Players2,
+    Races2,
 }
 
 #[near(serializers = [borsh])]
@@ -80,6 +103,8 @@ pub struct House {
     /// Favour earned for this house in `fav_season`.
     pub favour: u128,
     pub fav_season: u32,
+    /// Rounds won in this house's hall, as their players reported them. A tally only: it pays nothing.
+    pub wins: u64,
 }
 
 #[near(serializers = [borsh])]
@@ -104,6 +129,8 @@ pub struct Player {
     pub plays: u32,
     pub wins: u32,
     pub bought: bool,
+    /// You have backed a team in a race here.
+    pub raced: bool,
 }
 
 #[near(serializers = [borsh])]
@@ -120,18 +147,23 @@ pub struct Round {
 #[derive(Clone)]
 pub struct Race {
     pub n: u32,
+    /// 0 until the race starts: it is drawn from the starting block, after betting has closed.
     pub seed: u32,
     pub laps: u8,
     pub called_ns: u64,
     pub off_ns: u64,
+    /// When the seed was drawn (0 until then). Whip ticks count from here.
+    pub started_ns: u64,
     pub pools: [u128; HOUSES],
     pub whips: Vec<(u32, u8)>,
     pub settled: bool,
     pub order: Vec<u8>,
-    /// Finish times in milliseconds after the off (0 if a team never finished).
+    /// Finish times in milliseconds after the start (0 if a team never finished).
     pub finish_ms: Vec<u32>,
     /// What the winners share (the pools less the 5% that goes to the crown).
     pub payout: u128,
+    /// What the winners have claimed so far.
+    pub claimed: u128,
 }
 
 #[near(serializers = [borsh])]
@@ -153,16 +185,54 @@ pub struct Season {
     pub ended_ns: u64,
 }
 
-#[near(contract_state)]
-#[derive(PanicOnDefault)]
-pub struct Realm {
+// ---------- The first version's layout, read once by `migrate` ----------
+
+#[near(serializers = [borsh])]
+#[derive(Clone)]
+pub struct HouseV1 {
+    pub reserve: u128,
+    pub supply: u128,
+    pub burned: u128,
+    pub rounds: u64,
+    pub favour: u128,
+    pub fav_season: u32,
+}
+
+#[near(serializers = [borsh])]
+#[derive(Clone, Default)]
+pub struct PlayerV1 {
+    pub seals: u8,
+    pub halls_won: u16,
+    pub plays: u32,
+    pub wins: u32,
+    pub bought: bool,
+}
+
+#[near(serializers = [borsh])]
+#[derive(Clone)]
+pub struct RaceV1 {
+    pub n: u32,
+    pub seed: u32,
+    pub laps: u8,
+    pub called_ns: u64,
+    pub off_ns: u64,
+    pub pools: [u128; HOUSES],
+    pub whips: Vec<(u32, u8)>,
+    pub settled: bool,
+    pub order: Vec<u8>,
+    pub finish_ms: Vec<u32>,
+    pub payout: u128,
+}
+
+#[near(serializers = [borsh])]
+pub struct RealmV1 {
     pub owner: AccountId,
-    pub houses: Vec<House>,
+    pub houses: Vec<HouseV1>,
     pub holdings: LookupMap<(u8, AccountId), Holding>,
-    pub players: LookupMap<AccountId, Player>,
+    pub players: LookupMap<AccountId, PlayerV1>,
     pub rounds: LookupMap<u64, Round>,
     pub next_round: u64,
-    pub races: Vector<Race>,
+    pub races: Vector<RaceV1>,
     pub tickets: LookupMap<(u32, AccountId), Ticket>,
     pub pool: u128,
     pub season: u32,
@@ -171,8 +241,45 @@ pub struct Realm {
     pub seasons: Vector<Season>,
 }
 
+#[near(contract_state)]
+#[derive(PanicOnDefault)]
+pub struct Realm {
+    pub owner: AccountId,
+    pub houses: Vec<House>,
+    pub holdings: LookupMap<(u8, AccountId), Holding>,
+    /// Players from the first version, moved to `players2` the next time they play.
+    pub players: LookupMap<AccountId, PlayerV1>,
+    pub rounds: LookupMap<u64, Round>,
+    pub next_round: u64,
+    /// Races from the first version (their seed was drawn at the call). Kept, and still settled and claimed.
+    pub races: Vector<RaceV1>,
+    pub tickets: LookupMap<(u32, AccountId), Ticket>,
+    pub pool: u128,
+    pub season: u32,
+    pub season_secs: u64,
+    pub season_ends_ns: u64,
+    pub seasons: Vector<Season>,
+    pub players2: LookupMap<AccountId, Player>,
+    /// Races since, by number. Only the last RACE_KEEP are kept.
+    pub races2: LookupMap<u32, Race>,
+    pub race_count: u32,
+    pub legacy_races: u32,
+    /// Seasons whose crown claims have closed (their leftover rolled into the next pool).
+    pub seasons_closed: u32,
+}
+
 pub(crate) fn event(name: &str, data: Value) {
-    env::log_str(&format!("EVENT_JSON:{}", json!({"standard": "crownfall", "version": "1", "event": name, "data": data})));
+    env::log_str(&format!("EVENT_JSON:{}", json!({"standard": "crownfall", "version": "2", "event": name, "data": data})));
+}
+
+/// A NEP-245 event (mt_mint, mt_burn, mt_transfer).
+pub(crate) fn mt_event(name: &str, data: Value) {
+    env::log_str(&format!("EVENT_JSON:{}", json!({"standard": "nep245", "version": "1.0.0", "event": name, "data": [data]})));
+}
+
+/// The NEP-245 token id of a house's coin.
+pub fn token_of(h: usize) -> String {
+    TICKERS[h].to_lowercase()
 }
 
 uint::construct_uint! {
@@ -185,6 +292,18 @@ pub fn mul_div(a: u128, b: u128, c: u128) -> u128 {
     let r = U256::from(a) * U256::from(b) / U256::from(c);
     require!(r <= U256::from(u128::MAX), "overflow");
     r.as_u128()
+}
+
+#[ext_contract(ext_mt_receiver)]
+pub trait MtReceiver {
+    fn mt_on_transfer(
+        &mut self,
+        sender_id: AccountId,
+        previous_owner_ids: Vec<AccountId>,
+        token_ids: Vec<String>,
+        amounts: Vec<U128>,
+        msg: String,
+    ) -> PromiseOrValue<Vec<U128>>;
 }
 
 #[near]
@@ -206,6 +325,7 @@ impl Realm {
                 rounds: 0,
                 favour: 0,
                 fav_season: 1,
+                wins: 0,
             })
             .collect();
         Self {
@@ -220,20 +340,67 @@ impl Realm {
             pool: 0,
             season: 1,
             season_secs,
-            season_ends_ns: env::block_timestamp() + season_secs * 1_000_000_000,
+            season_ends_ns: env::block_timestamp() + season_secs * SEC,
             seasons: Vector::new(Key::Seasons),
+            players2: LookupMap::new(Key::Players2),
+            races2: LookupMap::new(Key::Races2),
+            race_count: 0,
+            legacy_races: 0,
+            seasons_closed: 0,
         }
+    }
+
+    /// Upgrade the first version's state in place: holdings, rounds, tickets and seasons keep their layout; houses
+    /// gain a win tally; old races and players are read as they are and moved over as they're touched.
+    #[init(ignore_state)]
+    #[private]
+    pub fn migrate() -> Self {
+        let old: RealmV1 = env::state_read().unwrap_or_else(|| env::panic_str("no state to migrate"));
+        let n = old.races.len();
+        let houses = old
+            .houses
+            .iter()
+            .map(|g| House { reserve: g.reserve, supply: g.supply, burned: g.burned, rounds: g.rounds, favour: g.favour, fav_season: g.fav_season, wins: 0 })
+            .collect();
+        event("migrated", json!({"version": "2", "legacy_races": n}));
+        Self {
+            owner: old.owner,
+            houses,
+            holdings: old.holdings,
+            players: old.players,
+            rounds: old.rounds,
+            next_round: old.next_round,
+            races: old.races,
+            tickets: old.tickets,
+            pool: old.pool,
+            season: old.season,
+            season_secs: old.season_secs,
+            season_ends_ns: old.season_ends_ns,
+            seasons: old.seasons,
+            players2: LookupMap::new(Key::Players2),
+            races2: LookupMap::new(Key::Races2),
+            race_count: n,
+            legacy_races: n,
+            seasons_closed: 0,
+        }
+    }
+
+    pub fn version(&self) -> String {
+        "2".into()
     }
 
     // ---------- Coin ----------
 
-    /// Buy house coin with the attached NEAR at the current price.
+    /// Buy house coin with the attached NEAR at the current price. An account's first purchase of a house's coin
+    /// (and its first purchase of all) pays for the record it opens, out of the deposit.
     #[payable]
     pub fn buy(&mut self, house: u8, min_out: Option<U128>) -> U128 {
         let who = env::predecessor_account_id();
-        let paid = env::attached_deposit().as_yoctonear();
-        require!(paid >= NEAR / 1000, "attach at least 0.001 NEAR");
+        let deposit = env::attached_deposit().as_yoctonear();
+        require!(deposit >= MIN_BUY, "attach at least 0.01 NEAR");
         let h = self.house_idx(house);
+        let records = (!self.holdings.contains_key(&(house, who.clone()))) as u128 + (!self.has_player(&who)) as u128;
+        let paid = deposit - records * RECORD_FEE;
         let fee = paid * FEE_BPS / 10_000;
         let to_pool = paid * FEE_POOL_BPS / 10_000;
         let net = paid - fee;
@@ -248,8 +415,9 @@ impl Realm {
         self.holdings.insert((house, who.clone()), hold);
         let mut p = self.player(&who);
         p.bought = true;
-        self.players.insert(who.clone(), p);
+        self.put_player(&who, p);
         event("buy", json!({"house": house, "who": who, "near": U128(paid), "coins": U128(got)}));
+        mt_event("mt_mint", json!({"owner_id": who, "token_ids": [token_of(h)], "amounts": [U128(got)]}));
         U128(got)
     }
 
@@ -271,26 +439,20 @@ impl Realm {
         hold.coins -= amount.0;
         self.holdings.insert((house, who.clone()), hold);
         event("sell", json!({"house": house, "who": who, "coins": amount, "near": U128(out)}));
+        mt_event("mt_burn", json!({"owner_id": who, "token_ids": [token_of(h)], "amounts": [amount]}));
         Promise::new(who).transfer(NearToken::from_yoctonear(out))
     }
 
     // ---------- Hall games ----------
 
-    /// Start a round in a house's hall: its entry is burned from your coin. Returns the round's id.
-    /// No deposit, so a game's signless key can call it.
+    /// Start a round in a house's hall: its entry is burned from your coin, and the burn is favour for the house.
+    /// Returns the round's id. No deposit, so a game's signless key can call it.
     pub fn enter(&mut self, house: u8) -> u64 {
         let who = env::predecessor_account_id();
         let h = self.house_idx(house);
         let cost = ENTRY[h];
-        let mut hold = self.holding(house, &who);
-        require!(hold.coins >= cost, "not enough coin for the entry: buy some at the Warwick Mint");
-        hold.coins -= cost;
-        self.add_favour(&mut hold, h, cost);
-        self.holdings.insert((house, who.clone()), hold);
-        let g = &mut self.houses[h];
-        g.supply -= cost;
-        g.burned += cost;
-        g.rounds += 1;
+        self.burn(&who, h, cost, "not enough coin for the entry: buy some at the Warwick Mint");
+        self.houses[h].rounds += 1;
         let id = self.open_round(&who, house, cost);
         event("enter", json!({"round": id, "house": house, "game": GAMES[h], "who": who, "burned": U128(cost)}));
         id
@@ -307,48 +469,40 @@ impl Realm {
     }
 
     /// End a round. `grade` is how good a win was, 0–100. The round's player reports it; anyone can close a round
-    /// that has run past the hour, as lost.
+    /// that has run past the hour, as lost. The chain can't see the game, so a reported win pays nothing: it marks the
+    /// hall as won (for the seals), adds to the house's tally of wins, and in the Library hands the stake back.
     pub fn finish(&mut self, round: u64, won: bool, grade: Option<u8>) -> Option<Promise> {
         let who = env::predecessor_account_id();
         let r = self.rounds.remove(&round).unwrap_or_else(|| env::panic_str("no such round, or it's over"));
-        let late = env::block_timestamp() > r.at_ns + ROUND_SECS * 1_000_000_000;
+        let late = env::block_timestamp() > r.at_ns + ROUND_SECS * SEC;
         require!(who == r.who || late, "not your round");
         let won = won && !late && who == r.who;
-        let grade = grade.unwrap_or(50).min(100) as u128;
+        let grade = grade.unwrap_or(50).min(100);
         let mut p = self.player(&r.who);
         let mut pay = None;
-        // Your first win at Haseeb's table: the Library seal's round. Wins are reported by the player's browser, so only
-        // this one pays a bonus; a bonus on every win would let a script farm the crown pool.
-        let first_lib = won && r.hall == LIBRARY && p.halls_won & (1 << LIBRARY) == 0;
         if won {
             p.wins += 1;
             p.halls_won |= 1 << r.hall;
+            if r.hall < LIBRARY {
+                self.houses[r.hall as usize].wins += 1;
+            }
         }
         if r.hall == LIBRARY {
-            // A win takes the stake back (the first one doubled, the bonus from the crown pool while it lasts); a lost
-            // stake goes to the crown pool.
             if won {
-                let bonus = if first_lib { r.amount.min(self.pool) } else { 0 };
-                self.pool -= bonus;
-                pay = Some(Promise::new(r.who.clone()).transfer(NearToken::from_yoctonear(r.amount + bonus)));
+                pay = Some(Promise::new(r.who.clone()).transfer(NearToken::from_yoctonear(r.amount)));
             } else {
                 self.pool += r.amount;
             }
-        } else if won {
-            // A win counts the burn again, and up to twice again for a perfect one.
-            let h = r.hall as usize;
-            let mut hold = self.holding(r.hall, &r.who);
-            self.add_favour(&mut hold, h, r.amount + r.amount * grade / 100);
-            self.holdings.insert((r.hall, r.who.clone()), hold);
         }
-        self.players.insert(r.who.clone(), p);
-        event("finish", json!({"round": round, "who": r.who, "hall": r.hall, "won": won, "grade": grade as u8}));
+        self.put_player(&r.who, p);
+        event("finish", json!({"round": round, "who": r.who, "hall": r.hall, "won": won, "grade": grade}));
         pay
     }
 
     // ---------- The Seven Wardens ----------
 
-    /// Take a Warden's seal. Each one checks what the chain can see.
+    /// Take a Warden's seal. Each one checks what the chain can see. (The Gate's trial is the drive in from the gate:
+    /// nothing on chain to check, so it asks for nothing.)
     pub fn seal(&mut self, seal: u8) {
         let who = env::predecessor_account_id();
         require!((seal as usize) < SEALS.len(), "no such seal");
@@ -366,96 +520,137 @@ impl Realm {
                 let hall = [2u16, 0, 8][seal as usize - 2];
                 require!(p.halls_won & (1 << hall) != 0, "win that hall's game first");
             }
-            5 => require!(has(&p, 1), "Warwick's seal first"),
+            5 => {
+                require!(has(&p, 1), "Warwick's seal first");
+                require!(p.raced, "back a team in a race at the Hippodrome first");
+            }
             _ => {
                 require!(p.seals & 0b11_1111 == 0b11_1111, "the six other seals first");
                 require!((p.halls_won & 0xff).count_ones() >= 3, "win in three houses' halls");
             }
         }
         p.seals |= 1 << seal;
-        self.players.insert(who.clone(), p);
+        self.put_player(&who, p);
         event("seal", json!({"who": who, "seal": SEALS[seal as usize]}));
     }
 
     // ---------- The Mumtaz Hippodrome ----------
 
-    /// Call the next race (anyone, once the last one is settled). The seed is the block's.
+    /// Call the next race (anyone, once the last one is settled). Betting opens; the seed isn't drawn yet. The race
+    /// RACE_KEEP back is deleted, and whatever its winners never claimed goes to the crown pool.
     pub fn call_race(&mut self) -> u32 {
-        if let Some(last) = self.races.len().checked_sub(1).and_then(|i| self.races.get(i)) {
-            require!(last.settled, "the last race isn't settled yet");
+        if let Some(last) = self.race_count.checked_sub(1) {
+            require!(self.race(last).settled, "the last race isn't settled yet");
         }
-        let n = self.races.len();
-        let s = env::random_seed();
-        let seed = u32::from_le_bytes([s[0], s[1], s[2], s[3]]);
+        let n = self.race_count;
+        if let Some(old) = n.checked_sub(RACE_KEEP).filter(|&o| o >= self.legacy_races) {
+            if let Some(r) = self.races2.remove(&old) {
+                let left = r.payout.saturating_sub(r.claimed);
+                self.pool += left;
+                if left > 0 {
+                    event("unclaimed", json!({"race": old, "near": U128(left)}));
+                }
+            }
+        }
         let now = env::block_timestamp();
+        let laps = CUP_LAPS[n as usize % CUP_LAPS.len()];
         let race = Race {
             n,
-            seed,
-            laps: CUP_LAPS[n as usize % CUP_LAPS.len()],
+            seed: 0,
+            laps,
             called_ns: now,
-            off_ns: now + BET_SECS * 1_000_000_000,
+            off_ns: now + BET_SECS * SEC,
+            started_ns: 0,
             pools: [0; HOUSES],
             whips: vec![],
             settled: false,
             order: vec![],
             finish_ms: vec![],
             payout: 0,
+            claimed: 0,
         };
-        self.races.push(race);
-        event("race", json!({"n": n, "seed": seed, "laps": CUP_LAPS[n as usize % CUP_LAPS.len()], "off_ns": U128((now + BET_SECS * 1_000_000_000) as u128)}));
+        self.races2.insert(n, race);
+        self.race_count += 1;
+        event("race", json!({"n": n, "laps": laps, "off_ns": U128((now + BET_SECS * SEC) as u128)}));
         n
     }
 
-    /// Back a team with the attached NEAR, before the off.
+    /// Back a team with the attached NEAR, before the off. Your first bet in a race pays for its ticket (0.0025 NEAR,
+    /// and as much again for a player record if you have none) out of the stake.
     #[payable]
     pub fn bet(&mut self, race: u32, house: u8) {
         let who = env::predecessor_account_id();
-        let amt = env::attached_deposit().as_yoctonear();
-        require!(amt >= NEAR / 100, "bet at least 0.01 NEAR");
+        let deposit = env::attached_deposit().as_yoctonear();
+        require!(deposit >= NEAR / 100, "bet at least 0.01 NEAR");
         let h = self.house_idx(house);
         let mut r = self.race(race);
         require!(env::block_timestamp() < r.off_ns, "they're off: betting is closed");
+        let key = (race, who.clone());
+        let records = (!self.tickets.contains_key(&key)) as u128 + (!self.has_player(&who)) as u128;
+        let amt = deposit - records * RECORD_FEE;
         r.pools[h] += amt;
-        self.races.replace(race, r);
-        let mut t = self.tickets.get(&(race, who.clone())).cloned().unwrap_or_default();
+        self.put_race(r);
+        let mut t = self.tickets.get(&key).cloned().unwrap_or_default();
         t.bets[h] += amt;
-        self.tickets.insert((race, who.clone()), t);
+        self.tickets.insert(key, t);
+        let mut p = self.player(&who);
+        if !p.raced {
+            p.raced = true;
+            self.put_player(&who, p);
+        }
         event("bet", json!({"race": race, "house": house, "who": who, "near": U128(amt)}));
     }
 
-    /// Crack a whip over a team during the run: it burns that house's coin from you.
+    /// Start a race once betting has closed: its seed is drawn from this block. Anyone may call it; a whip or a settle
+    /// starts it too if nobody has.
+    pub fn start_race(&mut self, race: u32) -> u32 {
+        let mut r = self.race(race);
+        require!(env::block_timestamp() >= r.off_ns, "betting is still open");
+        require!(r.started_ns == 0, "already started");
+        self.start(&mut r);
+        let seed = r.seed;
+        self.put_race(r);
+        seed
+    }
+
+    /// Crack a whip over a team during the run: it burns that house's coin from you. Only for those holding a ticket
+    /// on the race (back a team first).
     pub fn whip(&mut self, race: u32, house: u8) -> u32 {
         let who = env::predecessor_account_id();
         let h = self.house_idx(house);
         let mut r = self.race(race);
         let now = env::block_timestamp();
         require!(now >= r.off_ns, "they aren't off yet");
-        require!(now < r.off_ns + WHIP_SECS * 1_000_000_000, "too late to whip");
-        let mut t = self.tickets.get(&(race, who.clone())).cloned().unwrap_or_default();
+        if r.started_ns == 0 {
+            self.start(&mut r);
+        }
+        require!(now < r.started_ns + WHIP_SECS * SEC, "too late to whip");
+        let key = (race, who.clone());
+        let mut t = self.tickets.get(&key).cloned().unwrap_or_else(|| env::panic_str("back a team in this race to crack the whip"));
         require!(t.whips < WHIPS_PER_RACE, "three whips a race");
-        let mut hold = self.holding(house, &who);
-        require!(hold.coins >= WHIP_COINS, "a whip burns 200 of that house's coin");
-        hold.coins -= WHIP_COINS;
-        self.add_favour(&mut hold, h, WHIP_COINS);
-        self.holdings.insert((house, who.clone()), hold);
-        let g = &mut self.houses[h];
-        g.supply -= WHIP_COINS;
-        g.burned += WHIP_COINS;
+        self.burn(&who, h, WHIP_COINS, "a whip burns 200 of that house's coin");
         t.whips += 1;
-        self.tickets.insert((race, who.clone()), t);
-        // The tick the whip lands on: tenths of a second since the off, plus one (the sim's next tick).
-        let tick = ((now - r.off_ns) / 100_000_000) as u32 + 1;
+        self.tickets.insert(key, t);
+        // The tick the whip lands on: tenths of a second since the start, plus one (the sim's next tick).
+        let tick = ((now - r.started_ns) / 100_000_000) as u32 + 1;
         r.whips.push((tick, house));
-        self.races.replace(race, r);
+        self.put_race(r);
         event("whip", json!({"race": race, "house": house, "who": who, "tick": tick}));
         tick
     }
 
-    /// Run the race on chain and fix the result (anyone, once the whip window has closed).
+    /// Run the race on chain and fix the result (anyone, once the whip window has closed). A race nobody started is
+    /// started here, and run without whips, once a whole whip window has passed since the off.
     pub fn settle(&mut self, race: u32) -> Vec<u8> {
         let mut r = self.race(race);
         require!(!r.settled, "already settled");
-        require!(env::block_timestamp() >= r.off_ns + WHIP_SECS * 1_000_000_000, "the race is still on");
+        let now = env::block_timestamp();
+        if r.started_ns == 0 {
+            require!(now >= r.off_ns + WHIP_SECS * SEC, "the race is still on");
+            self.start(&mut r);
+        } else {
+            require!(now >= r.started_ns + WHIP_SECS * SEC, "the race is still on");
+        }
         let whips: Vec<sim::Whip> = r.whips.iter().map(|&(tick, house)| sim::Whip { tick, house }).collect();
         let out = sim::run(r.seed, r.laps, &whips);
         let total: u128 = r.pools.iter().sum();
@@ -472,15 +667,15 @@ impl Realm {
         r.order = out.order.clone();
         r.finish_ms = out.finish.iter().map(|f| f.map(|s| (s * 1000.0).round() as u32).unwrap_or(0)).collect();
         r.settled = true;
-        event("settle", json!({"race": race, "order": out.order, "finish_ms": r.finish_ms, "pool": U128(total)}));
-        self.races.replace(race, r);
+        event("settle", json!({"race": race, "seed": r.seed, "order": out.order, "finish_ms": r.finish_ms, "pool": U128(total)}));
+        self.put_race(r);
         out.order
     }
 
-    /// Collect what your bets on a race's winner earned.
+    /// Collect what your bets on a race's winner earned (within RACE_KEEP races; after that it's the crown's).
     pub fn claim_race(&mut self, race: u32) -> Promise {
         let who = env::predecessor_account_id();
-        let r = self.race(race);
+        let mut r = self.race(race);
         require!(r.settled, "not settled yet");
         let mut t = self.tickets.get(&(race, who.clone())).cloned().unwrap_or_else(|| env::panic_str("no ticket"));
         require!(!t.claimed, "already claimed");
@@ -489,6 +684,8 @@ impl Realm {
         let amount = mul_div(r.payout, t.bets[win], r.pools[win]);
         t.claimed = true;
         self.tickets.insert((race, who.clone()), t);
+        r.claimed += amount;
+        self.put_race(r);
         event("claim_race", json!({"race": race, "who": who, "near": U128(amount)}));
         Promise::new(who).transfer(NearToken::from_yoctonear(amount))
     }
@@ -496,11 +693,19 @@ impl Realm {
     // ---------- The Ashen Throne ----------
 
     /// End the season (anyone, once it's due): crown the house with the most favour and set the crown pool aside for
-    /// its players.
+    /// its players. Claims on the season before close now, and what was left of its pool joins this one.
     pub fn end_season(&mut self) -> Option<u8> {
         let now = env::block_timestamp();
         require!(now >= self.season_ends_ns, "the season isn't over");
         let s = self.season;
+        if s >= 2 && self.seasons_closed < s - 1 {
+            if let Some(prev) = self.seasons.get(s - 2) {
+                let left = prev.pool.0.saturating_sub(prev.claimed.0);
+                self.pool += left;
+                event("crown_rolled", json!({"season": s - 1, "near": U128(left)}));
+            }
+            self.seasons_closed = s - 1;
+        }
         let fav = |g: &House| if g.fav_season == s { g.favour } else { 0 };
         let mut crowned = None;
         let mut best = 0u128;
@@ -514,13 +719,14 @@ impl Realm {
         self.seasons.push(Season { n: s, crowned, pool: U128(pool), favour: U128(best), claimed: U128(0), ended_ns: now });
         event("crowned", json!({"season": s, "house": crowned, "pool": U128(pool)}));
         self.season += 1;
-        self.season_ends_ns = now + self.season_secs * 1_000_000_000;
+        self.season_ends_ns = now + self.season_secs * SEC;
         crowned
     }
 
-    /// Take your share of a season's crown pool, if you played for the crowned house.
+    /// Take your share of a season's crown pool, if you played for the crowned house. Open until the next season ends.
     pub fn claim_crown(&mut self, season: u32) -> Promise {
         let who = env::predecessor_account_id();
+        require!(season > self.seasons_closed, "that season's claims have closed: what was left joined the next crown");
         let mut s = self.seasons.get(season.checked_sub(1).expect("no such season")).cloned().expect("that season isn't over");
         let house = s.crowned.expect("nobody was crowned");
         let mut hold = self.holding(house, &who);
@@ -536,19 +742,152 @@ impl Realm {
         Promise::new(who).transfer(NearToken::from_yoctonear(amount))
     }
 
+    // ---------- NEP-245: the house coins as multi-tokens ----------
+
+    pub fn mt_balance_of(&self, account_id: AccountId, token_id: String) -> U128 {
+        U128(self.holding(self.token_house(&token_id), &account_id).coins)
+    }
+
+    pub fn mt_batch_balance_of(&self, account_id: AccountId, token_ids: Vec<String>) -> Vec<U128> {
+        token_ids.iter().map(|t| U128(self.holding(self.token_house(t), &account_id).coins)).collect()
+    }
+
+    pub fn mt_supply(&self, token_id: String) -> Option<U128> {
+        self.token_house_opt(&token_id).map(|h| U128(self.houses[h as usize].supply))
+    }
+
+    pub fn mt_batch_supply(&self, token_ids: Vec<String>) -> Vec<Option<U128>> {
+        token_ids.iter().map(|t| self.token_house_opt(t).map(|h| U128(self.houses[h as usize].supply))).collect()
+    }
+
+    pub fn mt_token(&self, token_ids: Vec<String>) -> Vec<Option<Value>> {
+        token_ids.iter().map(|t| self.token_house_opt(t).map(|h| json!({"token_id": token_of(h as usize), "owner_id": null}))).collect()
+    }
+
+    /// Send house coin. Attach 1 yoctoNEAR (the standard's confirmation), plus 0.0025 NEAR if the receiver holds none
+    /// of that coin yet: it pays for the receiver's new holding. Coin moves, favour doesn't.
+    #[payable]
+    pub fn mt_transfer(&mut self, receiver_id: AccountId, token_id: String, amount: U128, approval: Option<(AccountId, u64)>, memo: Option<String>) {
+        self.mt_batch_transfer(receiver_id, vec![token_id], vec![amount], approval.map(|a| vec![Some(a)]), memo);
+    }
+
+    #[payable]
+    pub fn mt_batch_transfer(
+        &mut self,
+        receiver_id: AccountId,
+        token_ids: Vec<String>,
+        amounts: Vec<U128>,
+        approvals: Option<Vec<Option<(AccountId, u64)>>>,
+        memo: Option<String>,
+    ) {
+        let sender = env::predecessor_account_id();
+        self.move_coins(&sender, &receiver_id, &token_ids, &amounts, approvals.is_some(), memo);
+    }
+
+    #[payable]
+    pub fn mt_transfer_call(
+        &mut self,
+        receiver_id: AccountId,
+        token_id: String,
+        amount: U128,
+        approval: Option<(AccountId, u64)>,
+        memo: Option<String>,
+        msg: String,
+    ) -> PromiseOrValue<Vec<U128>> {
+        self.mt_batch_transfer_call(receiver_id, vec![token_id], vec![amount], approval.map(|a| vec![Some(a)]), memo, msg)
+    }
+
+    /// Send house coin to a contract and tell it (`mt_on_transfer`); whatever it hands back as unused returns to you.
+    #[payable]
+    pub fn mt_batch_transfer_call(
+        &mut self,
+        receiver_id: AccountId,
+        token_ids: Vec<String>,
+        amounts: Vec<U128>,
+        approvals: Option<Vec<Option<(AccountId, u64)>>>,
+        memo: Option<String>,
+        msg: String,
+    ) -> PromiseOrValue<Vec<U128>> {
+        let sender = env::predecessor_account_id();
+        let ids = self.move_coins(&sender, &receiver_id, &token_ids, &amounts, approvals.is_some(), memo);
+        let owners = vec![sender.clone(); ids.len()];
+        ext_mt_receiver::ext(receiver_id.clone())
+            .with_static_gas(GAS_ON_TRANSFER)
+            .mt_on_transfer(sender, owners.clone(), ids.clone(), amounts.clone(), msg)
+            .then(Self::ext(env::current_account_id()).with_static_gas(GAS_RESOLVE).mt_resolve_transfer(owners, receiver_id, ids, amounts, None))
+            .into()
+    }
+
+    /// After `mt_on_transfer`: return what the receiver didn't use (as much of it as the receiver still holds).
+    /// Returns what was used, per token.
+    #[private]
+    pub fn mt_resolve_transfer(
+        &mut self,
+        previous_owner_ids: Vec<AccountId>,
+        receiver_id: AccountId,
+        token_ids: Vec<String>,
+        amounts: Vec<U128>,
+        #[allow(unused_variables)] approvals: Option<Vec<Option<Vec<(AccountId, u64, U128)>>>>,
+    ) -> Vec<U128> {
+        let unused: Vec<U128> = env::promise_result_checked(0, 4096)
+            .ok()
+            .and_then(|v| near_sdk::serde_json::from_slice::<Vec<U128>>(&v).ok())
+            .filter(|u| u.len() == amounts.len())
+            .unwrap_or_else(|| amounts.clone());
+        let mut used = Vec::with_capacity(amounts.len());
+        for (i, t) in token_ids.iter().enumerate() {
+            let h = self.token_house(t);
+            let mut back = self.holding(h, &receiver_id);
+            let refund = unused[i].0.min(amounts[i].0).min(back.coins);
+            if refund > 0 {
+                back.coins -= refund;
+                self.holdings.insert((h, receiver_id.clone()), back);
+                let owner = &previous_owner_ids[i];
+                let mut mine = self.holding(h, owner);
+                mine.coins += refund;
+                self.holdings.insert((h, owner.clone()), mine);
+                mt_event("mt_transfer", json!({"old_owner_id": receiver_id, "new_owner_id": owner, "token_ids": [token_of(h as usize)], "amounts": [U128(refund)]}));
+            }
+            used.push(U128(amounts[i].0 - refund));
+        }
+        used
+    }
+
+    pub fn mt_metadata_contract(&self) -> Value {
+        json!({"spec": "mt-1.0.0", "name": "Crownfall house coins"})
+    }
+
+    pub fn mt_metadata_base_by_token_id(&self, token_ids: Vec<String>) -> Vec<Option<Value>> {
+        token_ids.iter().map(|t| self.token_house_opt(t).map(|h| Self::base_meta(h as usize))).collect()
+    }
+
+    pub fn mt_metadata_token_all(&self, token_ids: Vec<String>) -> Vec<Option<Value>> {
+        token_ids
+            .iter()
+            .map(|t| {
+                self.token_house_opt(t).map(|h| {
+                    let h = h as usize;
+                    json!({"base": Self::base_meta(h), "token": {"title": format!("${}", TICKERS[h]),
+                        "description": format!("The coin of House {} of Vael. Burned to play in its hall; priced by its reserve.", NAMES[h])}})
+                })
+            })
+            .collect()
+    }
+
     // ---------- Views ----------
 
     pub fn get_realm(&self) -> Value {
         let s = self.season;
         json!({
+            "version": "2",
             "season": s,
             "season_ends_ns": U128(self.season_ends_ns as u128),
             "pool": U128(self.pool),
-            "races": self.races.len(),
+            "races": self.race_count,
             "houses": self.houses.iter().enumerate().map(|(i, g)| json!({
-                "id": i, "name": NAMES[i], "coin": TICKERS[i], "game": GAMES[i],
+                "id": i, "name": NAMES[i], "coin": TICKERS[i], "token_id": token_of(i), "game": GAMES[i],
                 "reserve": U128(g.reserve), "supply": U128(g.supply), "burned": U128(g.burned), "rounds": g.rounds,
-                "entry": U128(ENTRY[i]),
+                "wins": g.wins, "entry": U128(ENTRY[i]),
                 "favour": U128(if g.fav_season == s { g.favour } else { 0 }),
             })).collect::<Vec<_>>(),
         })
@@ -556,7 +895,7 @@ impl Realm {
 
     pub fn get_account(&self, account: AccountId) -> Value {
         let s = self.season;
-        let p = self.players.get(&account).cloned().unwrap_or_default();
+        let p = self.player(&account);
         let holds: Vec<Value> = (0..HOUSES as u8)
             .map(|h| {
                 let x = self.holdings.get(&(h, account.clone())).cloned().unwrap_or_default();
@@ -566,18 +905,19 @@ impl Realm {
         json!({
             "seals": SEALS.iter().enumerate().filter(|(i, _)| p.seals & (1 << i) != 0).map(|(_, s)| *s).collect::<Vec<_>>(),
             "halls_won": (0..9).filter(|h| p.halls_won & (1 << h) != 0).collect::<Vec<u8>>(),
-            "plays": p.plays, "wins": p.wins, "bought": p.bought,
+            "plays": p.plays, "wins": p.wins, "bought": p.bought, "raced": p.raced,
             "houses": holds,
         })
     }
 
     pub fn get_race(&self, race: u32) -> Option<Value> {
-        self.races.get(race).map(|r| {
+        self.race_opt(race).map(|r| {
             json!({
-                "n": r.n, "seed": r.seed, "laps": r.laps,
-                "called_ns": U128(r.called_ns as u128), "off_ns": U128(r.off_ns as u128),
+                "n": r.n, "seed": r.seed, "laps": r.laps, "started": r.started_ns > 0,
+                "called_ns": U128(r.called_ns as u128), "off_ns": U128(r.off_ns as u128), "started_ns": U128(r.started_ns as u128),
                 "pools": r.pools.iter().map(|&p| U128(p)).collect::<Vec<_>>(),
                 "whips": r.whips, "settled": r.settled, "order": r.order, "finish_ms": r.finish_ms, "payout": U128(r.payout),
+                "claimed": U128(r.claimed),
             })
         })
     }
@@ -593,7 +933,8 @@ impl Realm {
     }
 
     /// What `claim_crown(season)` would pay this account: the crowned house, the pool, the house's winning favour, your
-    /// favour with it that season, your share, and whether you've taken it. None until the season has ended.
+    /// favour with it that season, your share, and whether you've taken it (or the claims have closed). None until the
+    /// season has ended.
     pub fn get_crown(&self, season: u32, account: AccountId) -> Option<Value> {
         let s = season.checked_sub(1).and_then(|i| self.seasons.get(i)).cloned()?;
         let (mine, claimed) = match s.crowned {
@@ -606,7 +947,7 @@ impl Realm {
         };
         let share = if s.favour.0 > 0 { mul_div(s.pool.0, mine, s.favour.0) } else { 0 };
         Some(json!({"season": season, "crowned": s.crowned, "pool": s.pool, "favour": s.favour, "mine": U128(mine),
-                    "share": U128(share), "claimed": claimed, "ended_ns": U128(s.ended_ns as u128)}))
+                    "share": U128(share), "claimed": claimed, "closed": season <= self.seasons_closed, "ended_ns": U128(s.ended_ns as u128)}))
     }
 
     pub fn quote_buy(&self, house: u8, near: U128) -> U128 {
@@ -620,7 +961,8 @@ impl Realm {
         U128(gross - gross * FEE_BPS / 10_000)
     }
 
-    /// Replay a race off chain with extra whips, to see what they would have done (the browser does this too).
+    /// Replay a race off chain with extra whips, to see what they would have done (the browser does this too). A
+    /// race's seed only exists once betting has closed, so this can't tell a bettor anything.
     pub fn preview_race(&self, seed: u32, laps: u8, whips: Vec<(u32, u8)>) -> Value {
         let w: Vec<sim::Whip> = whips.into_iter().map(|(tick, house)| sim::Whip { tick, house }).collect();
         let out = sim::run(seed, laps, &w);
@@ -634,14 +976,131 @@ impl Realm {
         require!((house as usize) < HOUSES, "no such house");
         house as usize
     }
+    fn token_house_opt(&self, id: &str) -> Option<u8> {
+        let id = id.to_ascii_uppercase();
+        TICKERS.iter().position(|t| *t == id).map(|h| h as u8)
+    }
+    fn token_house(&self, id: &str) -> u8 {
+        self.token_house_opt(id).unwrap_or_else(|| env::panic_str("no such token"))
+    }
+    fn base_meta(h: usize) -> Value {
+        json!({"name": format!("House {} coin", NAMES[h]), "id": token_of(h), "symbol": TICKERS[h], "icon": null,
+               "decimals": "24", "base_uri": null, "reference": null, "copies": null, "reference_hash": null})
+    }
     fn holding(&self, house: u8, who: &AccountId) -> Holding {
         self.holdings.get(&(house, who.clone())).cloned().unwrap_or_default()
     }
-    fn player(&self, who: &AccountId) -> Player {
-        self.players.get(who).cloned().unwrap_or_default()
+    fn has_player(&self, who: &AccountId) -> bool {
+        self.players2.contains_key(who) || self.players.contains_key(who)
     }
-    fn race(&self, race: u32) -> Race {
-        self.races.get(race).cloned().unwrap_or_else(|| env::panic_str("no such race"))
+    fn player(&self, who: &AccountId) -> Player {
+        if let Some(p) = self.players2.get(who) {
+            return p.clone();
+        }
+        self.players
+            .get(who)
+            .map(|o| Player { seals: o.seals, halls_won: o.halls_won, plays: o.plays, wins: o.wins, bought: o.bought, raced: false })
+            .unwrap_or_default()
+    }
+    fn put_player(&mut self, who: &AccountId, p: Player) {
+        if self.players.contains_key(who) {
+            self.players.remove(who);
+        }
+        self.players2.insert(who.clone(), p);
+    }
+    fn race_opt(&self, n: u32) -> Option<Race> {
+        if n < self.legacy_races {
+            return self.races.get(n).map(|o| Race {
+                n: o.n,
+                seed: o.seed,
+                laps: o.laps,
+                called_ns: o.called_ns,
+                off_ns: o.off_ns,
+                started_ns: o.off_ns,
+                pools: o.pools,
+                whips: o.whips.clone(),
+                settled: o.settled,
+                order: o.order.clone(),
+                finish_ms: o.finish_ms.clone(),
+                payout: o.payout,
+                claimed: 0,
+            });
+        }
+        self.races2.get(&n).cloned()
+    }
+    fn race(&self, n: u32) -> Race {
+        self.race_opt(n).unwrap_or_else(|| env::panic_str("no such race (or it's more than 100 races old)"))
+    }
+    fn put_race(&mut self, r: Race) {
+        if r.n < self.legacy_races {
+            let o = RaceV1 {
+                n: r.n,
+                seed: r.seed,
+                laps: r.laps,
+                called_ns: r.called_ns,
+                off_ns: r.off_ns,
+                pools: r.pools,
+                whips: r.whips,
+                settled: r.settled,
+                order: r.order,
+                finish_ms: r.finish_ms,
+                payout: r.payout,
+            };
+            self.races.replace(o.n, o);
+        } else {
+            self.races2.insert(r.n, r);
+        }
+    }
+    /// Draw a race's seed from this block, now that betting has closed.
+    fn start(&mut self, r: &mut Race) {
+        let s = env::random_seed();
+        r.seed = u32::from_le_bytes([s[0], s[1], s[2], s[3]]);
+        r.started_ns = env::block_timestamp();
+        event("start", json!({"race": r.n, "seed": r.seed, "started_ns": U128(r.started_ns as u128)}));
+    }
+    /// Burn a player's house coin: the supply shrinks against the same reserve, and the burn is favour for the house.
+    fn burn(&mut self, who: &AccountId, h: usize, amount: u128, short: &str) {
+        let mut hold = self.holding(h as u8, who);
+        require!(hold.coins >= amount, short);
+        hold.coins -= amount;
+        self.add_favour(&mut hold, h, amount);
+        self.holdings.insert((h as u8, who.clone()), hold);
+        let g = &mut self.houses[h];
+        g.supply -= amount;
+        g.burned += amount;
+        mt_event("mt_burn", json!({"owner_id": who, "token_ids": [token_of(h)], "amounts": [U128(amount)]}));
+    }
+    /// Move coin between accounts (NEP-245). Returns the token ids, normalised.
+    fn move_coins(&mut self, from: &AccountId, to: &AccountId, token_ids: &[String], amounts: &[U128], approvals: bool, memo: Option<String>) -> Vec<String> {
+        require!(!approvals, "approvals aren't supported: send your own coin");
+        require!(from != to, "sender and receiver are the same");
+        require!(!token_ids.is_empty() && token_ids.len() == amounts.len(), "token_ids and amounts must match");
+        let mut opened = 0u128;
+        let mut ids = Vec::with_capacity(token_ids.len());
+        for (t, a) in token_ids.iter().zip(amounts) {
+            let h = self.token_house(t);
+            require!(a.0 > 0, "amount must be positive");
+            let mut mine = self.holding(h, from);
+            require!(mine.coins >= a.0, "you don't hold that much");
+            mine.coins -= a.0;
+            self.holdings.insert((h, from.clone()), mine);
+            if !self.holdings.contains_key(&(h, to.clone())) {
+                opened += 1;
+            }
+            let mut theirs = self.holding(h, to);
+            theirs.coins += a.0;
+            self.holdings.insert((h, to.clone()), theirs);
+            ids.push(token_of(h as usize));
+        }
+        let attached = env::attached_deposit().as_yoctonear();
+        require!(attached >= 1, "attach 1 yoctoNEAR to confirm the transfer");
+        require!(attached >= opened * RECORD_FEE, "the receiver holds none of that coin yet: attach 0.0025 NEAR for its new holding");
+        let mut e = json!({"old_owner_id": from, "new_owner_id": to, "token_ids": ids, "amounts": amounts});
+        if let Some(m) = memo {
+            e["memo"] = json!(m);
+        }
+        mt_event("mt_transfer", e);
+        ids
     }
     fn open_round(&mut self, who: &AccountId, hall: u8, amount: u128) -> u64 {
         let id = self.next_round;
@@ -649,7 +1108,7 @@ impl Realm {
         self.rounds.insert(id, Round { who: who.clone(), hall, amount, at_ns: env::block_timestamp() });
         let mut p = self.player(who);
         p.plays += 1;
-        self.players.insert(who.clone(), p);
+        self.put_player(who, p);
         id
     }
     /// Favour for this season, on the player's holding and on the house.

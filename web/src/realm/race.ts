@@ -24,8 +24,10 @@ export const live = {
 
 export interface ChainRaceView {
   n: number; seed: number; laps: number;
-  /** When the teams are off, in ms since the epoch (the chain's clock). */
+  /** When betting closes, in ms since the epoch (the chain's clock). */
   offMs: number;
+  /** When the race started: its seed is drawn then, from that block (undefined until someone starts it). */
+  startMs?: number;
   whips: [number, number][];
   settled: boolean; order: number[]; finishMs: number[];
   /** NEAR backed on each house, and what the winners share once settled. */
@@ -40,7 +42,7 @@ export function showChainRace(cv: ChainRaceView) {
   live.chain = cv;
   if (live.race.driver !== undefined || live.nextDriver !== undefined) { emit(); return; }
   const cur = live.race;
-  const same = cur.chain && cur.n === cv.n && prev && prev.n === cv.n && prev.whips.length === cv.whips.length;
+  const same = cur.chain && cur.n === cv.n && prev && prev.n === cv.n && prev.seed === cv.seed && prev.whips.length === cv.whips.length;
   if (!same) {
     const r = newRace(cv.n, cv.seed, cv.laps);
     r.chain = true;
@@ -52,13 +54,17 @@ export function showChainRace(cv: ChainRaceView) {
   emit();
 }
 function catchUp(r: Race) {
-  const off = live.chain?.offMs ?? 0, el = (Date.now() - off) / 1000;
+  // A contract race runs from its start: until then (betting, then the moment the seed is drawn) it is on parade.
+  const start = live.chain?.startMs;
+  const el = start === undefined ? -1 : (Date.now() - start) / 1000;
   if (el < 0) { r.phase = 'parade'; live.acc = 0; return; }
   if (r.phase === 'parade') r.phase = 'run';
   const target = Math.min(2400, el / DT), whole = Math.floor(target);
   while (r.tick < whole) tick(r);
   live.acc = r.tick === whole ? (target - whole) * DT : 0;
 }
+/** Whether the contract race on the track still takes bets. */
+export const betsOpen = () => !!live.chain && Date.now() < live.chain.offMs;
 /** Seconds to the off of the race on the track (chain races keep the chain's clock). */
 export function toOff(r: Race) { return r.chain ? Math.max(0, ((live.chain?.offMs ?? 0) - Date.now()) / 1000) : Math.max(0, PARADE - r.t); }
 const subs = new Set<() => void>();

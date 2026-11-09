@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react';
 import { HOUSES } from './realm/layout.ts';
 import { NearMark } from './NearMark.tsx';
-import { M, back, crack, laneLen, laneR, live as liveRace, odds, setWatch, standings, toOff, useRace } from './realm/race.ts';
+import { M, back, betsOpen, crack, laneLen, laneR, live as liveRace, odds, setWatch, standings, toOff, useRace } from './realm/race.ts';
 import { CONTRACT, EXPLORER, onChain, useChain } from './chain/near.ts';
 import { WHIP_COINS, WHIP_SECS, bet, callRace, collect, whip, winnings } from './chain/races.ts';
 import { held } from './chain/game.ts';
@@ -26,7 +26,7 @@ export function RaceHud() {
   const lap = Math.min(r.cup.laps, Math.floor(order[0].p) + 1);
   const off = Math.ceil(toOff(r));
   const status = r.phase === 'parade'
-    ? (cv ? `Betting closes in ${off >= 60 ? `${Math.floor(off / 60)}:${String(off % 60).padStart(2, '0')}` : `${off}s`}` : `Under starter's orders · ${off}s`)
+    ? (cv ? (betsOpen() ? `Betting closes in ${off >= 60 ? `${Math.floor(off / 60)}:${String(off % 60).padStart(2, '0')}` : `${off}s`}` : 'Betting closed · the seed is drawn on NEAR at the start') : `Under starter's orders · ${off}s`)
     : r.phase === 'run' ? `Lap ${lap} of ${r.cup.laps}`
     : cv ? (cv.settled ? 'Settled on NEAR' : 'Over the line · settling on NEAR') : 'Result';
 
@@ -74,8 +74,10 @@ export function RaceHud() {
   const mine = cv.ticket?.bets ?? [];
   const myBet = mine.reduce((a, b) => a + b, 0);
   const backedH = mine.length ? mine.indexOf(Math.max(...mine)) : -1;
-  const whipHouse = backedH >= 0 && mine[backedH] > 0 ? backedH : liveRace.race.backed;
-  const whipOpen = r.phase !== 'parade' && Date.now() < cv.offMs + WHIP_SECS * 1000;
+  // The contract only lets a ticket holder whip: back a team first.
+  const whipHouse = backedH >= 0 && mine[backedH] > 0 ? backedH : undefined;
+  const whipOpen = r.phase !== 'parade' && cv.startMs !== undefined && Date.now() < cv.startMs + WHIP_SECS * 1000;
+  const open = betsOpen();
   const whipsLeft = 3 - (cv.ticket?.whips ?? 0);
   const win = cv.settled ? cv.order[0] : undefined;
   const pays = winnings(cv);
@@ -86,15 +88,15 @@ export function RaceHud() {
       <h2>{r.cup.name}</h2>
       <div className="race-status">{status}</div>
       {win !== undefined && <div className="winner" style={{ ['--c' as string]: HOUSES[win].colors[0] }}>The contract ran it: <b>House {HOUSES[win].name}</b> wins</div>}
-      {r.phase === 'parade' && (
-        <div className="stakes">Stake {STAKES.map((s) => <button key={s} className={s === stake ? 'on' : ''} onClick={() => setStake(s)}>{s} NEAR</button>)}</div>
+      {open && (
+        <div className="stakes">Stake {STAKES.map((s) => <button key={s} className={s === stake ? 'on' : ''} onClick={() => setStake(s)}>{s} NEAR</button>)}<small>Your first bet in a race pays 0.0025 NEAR for its ticket.</small></div>
       )}
       <Standings
         order={order}
         backed={backedH >= 0 && mine[backedH] > 0 ? backedH : undefined}
         odds={(ru) => (cv.pools[ru.house] > 0 ? `${((total * 0.95) / cv.pools[ru.house]).toFixed(1)}×` : '—')}
         sub={(h) => (cv.pools[h] > 0 ? `${cv.pools[h].toFixed(2)} N` : '')}
-        action={r.phase === 'parade' ? (h) => <button className="back" disabled={busy} onClick={() => void bet(h, stake).catch(() => {})}>{mine[h] > 0 ? `+${stake}` : 'Back'}</button> : undefined}
+        action={open ? (h) => <button className="back" disabled={busy} onClick={() => void bet(h, stake).catch(() => {})}>{mine[h] > 0 ? `+${stake}` : 'Back'}</button> : undefined}
       />
       {myBet > 0 && <div className="slip">Your bets: {mine.map((b, h) => (b > 0 ? `${b} NEAR on ${HOUSES[h].name}` : '')).filter(Boolean).join(', ')}.</div>}
       {whipOpen && whipHouse !== undefined && (
@@ -109,8 +111,8 @@ export function RaceHud() {
       {cv.settled && myBet > 0 && pays === 0 && win !== undefined && <div className="slip">{HOUSES[win].name} won; your teams didn’t. Your stake stays in the pot for the winners.</div>}
       {cv.settled && <button className="ghost" disabled={busy} onClick={() => void callRace().catch(() => {})}>Call the next race</button>}
       <div className="foot">
-        <span className="mono">seed {cv.seed.toString(16).padStart(8, '0')} · {cv.whips.length} whips</span>
-        <span className="on-near"><NearMark size={12} /> Seeded by the block. The contract runs this same race to settle it. <a href={`${EXPLORER}/address/${CONTRACT}`} target="_blank" rel="noreferrer">contract</a></span>
+        <span className="mono">{cv.startMs !== undefined ? `seed ${cv.seed.toString(16).padStart(8, '0')}` : 'seed not drawn yet'} · {cv.whips.length} whips</span>
+        <span className="on-near"><NearMark size={12} /> Seeded by the block that starts it, after betting closes, so no bettor could know the result. The contract runs this same race to settle it. <a href={`${EXPLORER}/address/${CONTRACT}`} target="_blank" rel="noreferrer">contract</a></span>
       </div>
       <button className="ghost leave" onClick={() => setWatch(false)}>Leave the stands</button>
     </aside>

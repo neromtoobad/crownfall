@@ -3,7 +3,7 @@ import { LIBRARY, hallHouse } from '../realm/rooms.ts';
 import { SealGlyph } from '../StoryHud.tsx';
 import { fmt, ledger } from '../realm/ledger.ts';
 import { TOUCH, usePlay } from '../realm/play.ts';
-import { beginRound, gameDef, libDoubles, quitGame, session } from './host.ts';
+import { beginRound, gameDef, quitGame, session } from './host.ts';
 import { sigilURL } from '../realm/sigils.ts';
 import { useMemo } from 'react';
 import { buyCoin, held } from '../chain/game.ts';
@@ -42,10 +42,10 @@ export function GameHud() {
       <div className="entry">
         {live
           ? (lib
-            ? <><b>Stake: 1 NEAR on the table, on NEAR.</b><span>Your wallet asks for it. {c.me?.halls_won.includes(LIBRARY) ? 'Win and it comes back to you' : 'Your first win here pays it back doubled (the extra comes from the crown pool, while it lasts); after that a win hands it back'}. Lose and it goes to the crown pool.</span></>
+            ? <><b>Stake: 1 NEAR on the table, on NEAR.</b><span>Your wallet asks for it. Win and it comes back to you; lose and it goes to the crown pool.</span></>
             : <><b>Entry: {fmt(def.entry)} ${h.coin}, burned on NEAR.</b><span>{short ? `You hold ${fmt(held(room.house))}: buy some first.` : `You hold ${fmt(held(room.house))}.`} The burn raises ${h.coin} for every holder and counts as favour with House {h.name}.</span></>)
           : lib
-          ? (session.free ? <><b>Haseeb stands you the first game.</b><span>Win it and he pays you {def.entry} NEAR. After this the stake is {def.entry} NEAR: your first staked win pays it back doubled, later wins hand it back.</span></> : <><b>Stake: {def.entry} NEAR on the table.</b><span>{libDoubles() ? 'Your first win here pays it back doubled; after that a win hands it back.' : 'Win and it comes back to you.'} Lose and it goes to the crown pool.</span></>)
+          ? (session.free ? <><b>Haseeb stands you the first game.</b><span>Win it and he pays you {def.entry} NEAR. After this the stake is {def.entry} NEAR: a win hands it back.</span></> : <><b>Stake: {def.entry} NEAR on the table.</b><span>Win and it comes back to you. Lose and it goes to the crown pool.</span></>)
           : session.free
           ? <><b>The house stands you this round.</b><span>After this, a round burns {fmt(def.entry)} ${h.coin}.</span></>
           : <><b>Entry: {fmt(def.entry)} ${h.coin}, burned.</b><span>{ledger.held[room.house] >= def.entry ? `You hold ${fmt(ledger.held[room.house])}.` : 'Bought on the curve for you first.'} Every round played here raises ${h.coin} for its holders.</span></>}
@@ -63,7 +63,7 @@ export function GameHud() {
       <small>{def.name}</small>
       <h2>{r.won ? 'Won' : 'Lost'}</h2>
       <p>{r.line}</p>
-      {r.won && live && <div className="entry"><b>{lib ? (session.libBonus > 0 ? `Your stake comes back doubled: ${(session.staked + session.libBonus).toFixed(2)} NEAR` : 'Your stake comes back to you') : `Favour with House ${h.name}, recorded on NEAR`}</b><span>{lib ? 'Haseeb nods. That one he’ll remember.' : 'A won round counts your burn again, up to twice again for a perfect one. At the season’s end the house with the most favour is crowned and its players share the crown pool.'}</span></div>}
+      {r.won && live && <div className="entry"><b>{lib ? 'Your stake comes back to you' : `A win for House ${h.name}, recorded on NEAR`}</b><span>{lib ? 'Haseeb nods. That one he’ll remember.' : 'It counts toward the Wardens’ seals and the house’s tally of wins. The favour was your burn: at the season’s end the house with the most favour is crowned and its players share the crown pool. (The chain can’t watch the game, so a reported win pays nothing.)'}</span></div>}
       {!r.won && live && <div className="entry"><b>{lib ? 'The stake goes to the crown pool' : `The ${h.coin} you burned still counts as favour`}</b><span>The round is closed on NEAR.</span></div>}
       {r.won && !live && <div className="entry"><b>+{session.payout} NEAR {lib ? 'from the Library’s table' : `from the treasury of House ${h.name}`}</b><span>{lib ? 'Haseeb nods. That one he’ll remember.' : `Favour with House ${h.name}: ${ledger.favour[room.house]}`}</span></div>}
       <div className="go"><button disabled={session.busy} onClick={beginRound}><kbd>E</kbd> Again ({lib ? `${def.entry} NEAR` : `${fmt(def.entry)} $${h.coin}`})</button><button className="ghost" onClick={quitGame}><kbd>Esc</kbd> Done</button></div>

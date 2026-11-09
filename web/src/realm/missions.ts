@@ -7,7 +7,7 @@ import { BRIDGES } from './bridges.ts';
 import { HIPPODROME, HOUSES, LANDMARKS, ROADS, roadCurve, yardOf } from './layout.ts';
 import { flags, ledger, note, pay } from './ledger.ts';
 import { takeSeal } from '../chain/game.ts';
-import { onChain } from '../chain/near.ts';
+import { chain, onChain } from '../chain/near.ts';
 import { PLACES, STABLES } from './places.ts';
 import { emitPlay, me, play, hush } from './play.ts';
 import { LIBRARY, doorOf, libDoor } from './rooms.ts';
@@ -188,7 +188,10 @@ export const MISSIONS: Mission[] = [
     ],
     steps: [{ text: () => `Drive at the **Hippodrome** (the stables) and finish in the **top four**`, target: () => STABLES,
       check: (s) => since(flags.race, s) && flags.race!.place <= 4,
-      fail: (s) => (since(flags.race, s) && flags.race!.place > 4 ? `You finished ${nth(flags.race!.place)}. The crowd wants better.` : undefined) }],
+      fail: (s) => (since(flags.race, s) && flags.race!.place > 4 ? `You finished ${nth(flags.race!.place)}. The crowd wants better.` : undefined) },
+      // On NEAR the seal needs what the contract can see: a bet on one of its races. (The practice purse skips this.)
+      { text: () => 'Now back a team in a race **on NEAR**, from the stands at the **Hippodrome**', target: () => STABLES,
+        check: () => !onChain() || !!chain.me?.raced }],
     outro: () => [{ who: 'Mert Mumtaz', text: `${nth(flags.race?.place ?? 4)}. They were chanting a name up there. The seal of the Hippodrome.` }],
     reward: { near: 5, renown: 2 },
   },
@@ -260,7 +263,7 @@ export function scribes(): Line[] {
   const n = sealCount(), h = nextHint();
   const tips = [
     'Every round in a hall burns that house’s coin. Your own house’s coin goes up when people play in your hall.',
-    'The lit doors on the keeps are open to anyone. Every hall has its own game, and a win earns that house’s favour.',
+    'The lit doors on the keeps are open to anyone. Every hall has its own game, and every round you play there burns that house’s coin: the burn is your favour with it.',
     'The radar’s yellow letters are the Wardens. The bright beam over the land is where you should be going.',
     'At the Hippodrome the inside lane is shortest. Crack the whip on the straights, not in the turns.',
   ];
