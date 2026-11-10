@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { burst, voice } from '../realm/sound.ts';
 import { FireLight, Flames, type FlameSpot } from '../realm/fire.tsx';
 import type { Room } from '../realm/rooms.ts';
-import { keys, usePlay } from '../realm/play.ts';
+import { keys, TOUCH, usePlay } from '../realm/play.ts';
 import { drawSigil, sigilsReady } from '../realm/sigils.ts';
 import { wind } from '../realm/wind.ts';
 import { gameKeys, gameUi, register, session, type Result } from './host.ts';
@@ -259,7 +259,10 @@ const ui = gameUi({
 });
 
 interface Shot { path: THREE.Vector3[]; dt: number; T: number; hit: number; pts: number; local: THREE.Vector3; end: THREE.Vector3; dir: THREE.Vector3; gold: boolean; at: number }
-interface Stuck { butt: number; local: THREE.Vector3; end: THREE.Vector3; dir: THREE.Vector3; at: number }
+interface Stuck { butt: number; local: THREE.Vector3; end: THREE.Vector3; dir: THREE.Vector3; at: number; swing: number }
+const FWD = new THREE.Vector3(0, 0, -1), UP = new THREE.Vector3(0, 1, 0), ZAX = new THREE.Vector3(0, 0, 1);
+const ease = (dt: number, k: number) => 1 - Math.exp(-dt * k);
+const sstep = (u: number) => { u = Math.min(1, Math.max(0, u)); return u * u * (3 - 2 * u); };
 
 function twang(p: number) { burst(150 + p * 60, 7, 0.25 + p * 0.2, 0.22); burst(900, 4, 0.08, 0.06); burst(3200, 2, 0.04, 0.05); }
 function creak() { burst(220 + Math.random() * 120, 14, 0.035, 0.07); }
@@ -292,25 +295,45 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     phase: 'ready' as Phase, t: 0, clock: 0, arrow: 0, score: 0, hits: [] as number[],
     yaw: 0, pitch: -0.07, draw: 0, full: 0, sway: new THREE.Vector2(), mouse: false, creakT: 0,
     shot: undefined as Shot | undefined, stuck: [] as (Stuck | undefined)[], slow: false, trauma: 0, endAt: 0, recoil: 0,
+    armed: false, ended: false, whistle: -1, pid: -1, aim: new THREE.Vector2(), view: 'eye' as 'eye' | 'spot' | 'ride', viewT: 0, placed: false,
   });
-  useMemo(() => { ui.reset(); ui.set({ hits: [], line: `Arrow one: ${BUTTS[0].name}, ${BUTTS[0].paces} paces. Hold to draw.` }); }, []);
-  const v1 = useMemo(() => new THREE.Vector3(), []), v2 = useMemo(() => new THREE.Vector3(), []), v3 = useMemo(() => new THREE.Vector3(), []);
-  const camPos = useMemo(() => new THREE.Vector3(), []), look = useMemo(() => new THREE.Vector3(), []);
+  useMemo(() => { ui.reset(); ui.set({ hits: [], line: `Arrow one: ${BUTTS[0].name}, ${BUTTS[0].paces} paces. ${TOUCH ? 'Aim with the pad, hold to draw, let go to loose.' : 'Hold to draw, let go to loose.'}` }); }, []);
+  const v1 = useMemo(() => new THREE.Vector3(), []), v2 = useMemo(() => new THREE.Vector3(), []), v3 = useMemo(() => new THREE.Vector3(), []), v4 = useMemo(() => new THREE.Vector3(), []);
+  const camPos = useMemo(() => new THREE.Vector3(), []), look = useMemo(() => new THREE.Vector3(), []), lookNow = useMemo(() => new THREE.Vector3(), []);
+  const qz = useMemo(() => new THREE.Quaternion(), []);
   const ox = room.x, oz = room.z;
+  // The dust cloud's points are handed to the scene as a prop, which the renderer never frees by itself.
+  useEffect(() => () => dust.g.dispose(), [dust]);
 
   // Mouse: hold the left button to draw; move to aim (pointer lock gives movement, so does a plain move).
+  // A finger on the range does both: it draws while it is down and aims as it drags.
   useEffect(() => {
     const el = gl.domElement;
-    const down = (e: PointerEvent) => { if (e.button === 0) st.current.mouse = true; };
-    const up = (e: PointerEvent) => { if (e.button === 0) st.current.mouse = false; };
+    // Fingers that went down on the range itself. Only these aim: a thumb resting on the draw button also sends
+    // moves, and phones do not all report movementX for touch, so a finger's travel is measured from where it last was.
+    const last = new Map<number, [number, number]>();
+    // The draw belongs to the pointer that started it. (Judging by which button a pointerup names left the bow drawn
+    // for good when a second mouse button was pressed and released in between.)
+    const down = (e: PointerEvent) => { if (e.button !== 0) return; st.current.mouse = true; st.current.pid = e.pointerId; if (e.pointerType !== 'mouse') last.set(e.pointerId, [e.clientX, e.clientY]); };
+    const up = (e: PointerEvent) => { last.delete(e.pointerId); if (e.pointerId === st.current.pid) st.current.mouse = false; };
+    // A touch the system takes away, or the window losing focus, lowers the bow; it does not loose the arrow.
+    const lower = () => { const s = st.current; s.mouse = false; s.draw = 0; s.full = 0; };
+    const cancel = (e: PointerEvent) => { last.delete(e.pointerId); if (e.pointerId === st.current.pid) lower(); };
+    const blur = () => { last.clear(); lower(); };
     const move = (e: PointerEvent) => {
+      let dx = e.movementX, dy = e.movementY;
+      if (e.pointerType !== 'mouse') { const p = last.get(e.pointerId); if (!p) return; dx = e.clientX - p[0]; dy = e.clientY - p[1]; p[0] = e.clientX; p[1] = e.clientY; }
       const s = st.current; if (s.phase !== 'ready') return;
       const k = s.draw > 0.05 ? 0.0009 : 0.0016;
-      s.yaw = THREE.MathUtils.clamp(s.yaw + e.movementX * k, -0.4, 0.4);
-      s.pitch = THREE.MathUtils.clamp(s.pitch - e.movementY * k, -0.12, 0.2);
+      s.yaw = THREE.MathUtils.clamp(s.yaw + THREE.MathUtils.clamp(dx, -120, 120) * k, -0.4, 0.4);
+      s.pitch = THREE.MathUtils.clamp(s.pitch - THREE.MathUtils.clamp(dy, -120, 120) * k, -0.12, 0.2);
     };
     el.addEventListener('pointerdown', down); window.addEventListener('pointerup', up); window.addEventListener('pointermove', move);
-    return () => { el.removeEventListener('pointerdown', down); window.removeEventListener('pointerup', up); window.removeEventListener('pointermove', move); };
+    window.addEventListener('pointercancel', cancel); window.addEventListener('blur', blur);
+    return () => {
+      el.removeEventListener('pointerdown', down); window.removeEventListener('pointerup', up); window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointercancel', cancel); window.removeEventListener('blur', blur);
+    };
   }, [gl]);
 
   /** Fly an arrow from `from` along `dir` at `speed`, through gravity and today's wind, against the three butts,
@@ -357,16 +380,22 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     s.t += dt; s.clock += dt;
     const now = c.elapsedTime;
     gameKeys(); // Esc; the rest is read held
-    const held = keys.has(' ') || s.mouse;
+    // The Space that started the round is still down on the first frames. It has to come up once before it draws,
+    // or arrow one is half drawn and loosed into the floor the moment the round opens.
+    const down = keys.has(' ') || keys.has('enter') || s.mouse;
+    if (!down) s.armed = true;
+    const held = down && s.armed;
     // The far butt swings.
     if (far.current) far.current.rotation.z = swingAngle(s.clock, true);
     if (s.phase === 'ready') {
       // Aim with the keys (finer once drawn).
+      // The aim picks up speed over a few frames, so a quick tap is a finer nudge than a held key, and stops almost
+      // at once on release, so it never coasts past the gold.
       const k = (s.draw > 0.05 ? 0.16 : 0.42) * rawDt;
-      if (keys.has('arrowleft') || keys.has('a')) s.yaw -= k;
-      if (keys.has('arrowright') || keys.has('d')) s.yaw += k;
-      if (keys.has('arrowup') || keys.has('w')) s.pitch += k;
-      if (keys.has('arrowdown') || keys.has('s')) s.pitch -= k;
+      const ax = (keys.has('arrowright') || keys.has('d') ? 1 : 0) - (keys.has('arrowleft') || keys.has('a') ? 1 : 0);
+      const ay = (keys.has('arrowup') || keys.has('w') ? 1 : 0) - (keys.has('arrowdown') || keys.has('s') ? 1 : 0);
+      s.aim.x += (ax - s.aim.x) * ease(rawDt, ax ? 18 : 60); s.aim.y += (ay - s.aim.y) * ease(rawDt, ay ? 18 : 60);
+      s.yaw += s.aim.x * k; s.pitch += s.aim.y * k;
       s.yaw = THREE.MathUtils.clamp(s.yaw, -0.4, 0.4); s.pitch = THREE.MathUtils.clamp(s.pitch, -0.12, 0.2);
       if (held) {
         const was = s.draw;
@@ -382,9 +411,11 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
         const speed = 26 + 54 * Math.pow(p, 1.5);
         s.shot = simulate(from, dir, speed, s.clock, CALL[s.arrow]);
         s.slow = s.shot.gold;
-        s.phase = 'flight'; s.t = 0; s.draw = 0; s.full = 0; s.recoil = 1;
+        s.phase = 'flight'; s.t = 0; s.draw = 0; s.full = 0; s.recoil = 1; s.whistle = -1; s.aim.set(0, 0);
         twang(p);
-        const a = arrows.current[s.arrow]; if (a) a.visible = true;
+        // The arrow leaves the string where it stands. (Shown a frame before it was placed, it flashed at the middle
+        // of the hall, and on a gold the riding camera lurched toward that spot.)
+        const a = arrows.current[s.arrow]; if (a) { a.position.copy(s.shot.path[0]); a.quaternion.setFromUnitVectors(FWD, dir); a.visible = true; }
         ui.set({ phase: 'flight', draw: 0, shake: 0, cam: s.slow, line: s.slow ? '' : ui.state.line });
       } else s.draw = Math.max(0, s.draw - rawDt * 3);
       // Sway: a breath always; once at full draw, the longer you hold, the more the bow wanders and shakes.
@@ -392,20 +423,24 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
       const tr = Math.max(0, s.full - 3.2);
       s.sway.set(amp * (Math.sin(now * 1.9) + 0.6 * Math.sin(now * 4.7 + 1)) + tr * 0.002 * Math.sin(now * 37),
         amp * (Math.cos(now * 1.4) * 0.8 + 0.5 * Math.sin(now * 3.9 + 2)) + 0.0015 * Math.sin(now * 1.2) + tr * 0.002 * Math.sin(now * 41 + 1));
-      ui.set({ draw: s.draw, shake: Math.min(1, Math.max(0, s.full - 1.4) / 3) });
+      const shake = Math.min(1, Math.max(0, s.full - 1.4) / 3);
+      if (s.draw !== ui.state.draw || shake !== ui.state.shake) ui.set({ draw: s.draw, shake });
     } else if (s.phase === 'flight') {
       const sh = s.shot!;
       const a = arrows.current[s.arrow];
-      const i = Math.min(sh.path.length - 1, Math.floor(s.t / sh.dt));
+      // Between two steps of the flight the arrow is placed in proportion: slowed down on a gold it moves about one
+      // step a frame, and stepping whole steps made it stutter.
+      const f = Math.min(sh.path.length - 1, s.t / sh.dt), i = Math.floor(f);
       const p = sh.path[i], pn = sh.path[Math.min(sh.path.length - 1, i + 1)];
       if (a) {
-        a.position.copy(p);
-        v1.subVectors(pn, p); if (v1.lengthSq() > 1e-8) a.quaternion.setFromUnitVectors(v3.set(0, 0, -1), v1.normalize());
+        a.position.lerpVectors(p, pn, f - i);
+        v1.subVectors(pn, p); if (v1.lengthSq() > 1e-8) a.quaternion.setFromUnitVectors(FWD, v1.normalize());
       }
-      if (s.slow && i % 6 === 0) burst(1800 + i * 3, 6, 0.012, 0.03); // the whistle as it rides
+      // The whistle as it rides: one chirp for every sixth step of the flight, however fast the screen draws.
+      if (s.slow && Math.floor(i / 6) !== s.whistle) { s.whistle = Math.floor(i / 6); burst(1800 + i * 3, 6, 0.012, 0.03); }
       if (s.t >= sh.T) {
         // Impact.
-        s.stuck[s.arrow] = { butt: sh.hit, local: sh.local, end: sh.end.clone(), dir: sh.dir.clone(), at: now };
+        s.stuck[s.arrow] = { butt: sh.hit, local: sh.local, end: sh.end.clone(), dir: sh.dir.clone(), at: now, swing: swingAngle(sh.at, true) };
         s.score += sh.pts; s.hits.push(sh.pts);
         let line = '';
         const called = CALL[s.arrow];
@@ -447,8 +482,8 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
         }
       }
     } else if (s.phase === 'done') {
-      if (s.t > 1.8) {
-        s.t = -1e9;
+      if (s.t > 1.8 && !s.ended) {
+        s.ended = true;
         const won = s.score >= TO_WIN;
         end({ won, score: s.score, grade: (s.score - TO_WIN) / (50 - TO_WIN), line: `${s.score} from five arrows (${s.hits.join(' · ')}). ${won ? (s.score >= 42 ? 'Halloway would take you for a forester.' : 'A fair day on the range.') : `You needed ${TO_WIN}.`}` });
       }
@@ -457,15 +492,22 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     for (let i = 0; i < ARROWS; i++) {
       const a = arrows.current[i], l = s.stuck[i];
       if (!a || !l) continue;
-      if (l.butt === 2) { buttAt(2, s.clock, v1, true); a.position.copy(v1).add(l.local); a.position.z = BUTTS[2].z; }
-      else a.position.copy(l.end);
+      a.quaternion.setFromUnitVectors(FWD, l.dir);
+      if (l.butt === 2) {
+        // The far butt turns on its ropes as it swings, and an arrow in it turns with the cloth: by how far the butt
+        // has swung since the arrow struck. (Held at its first offset it slid across the rings.)
+        const d = swingAngle(s.clock, true) - l.swing, cs = Math.cos(d), sn = Math.sin(d);
+        buttAt(2, s.clock, v1, true);
+        a.position.set(v1.x + l.local.x * cs - l.local.y * sn, v1.y + l.local.x * sn + l.local.y * cs, BUTTS[2].z);
+        a.quaternion.premultiply(qz.setFromAxisAngle(ZAX, d));
+      } else a.position.copy(l.end);
       const w = Math.exp(-(now - l.at) * 6) * Math.sin((now - l.at) * 45) * 0.05;
-      a.quaternion.setFromUnitVectors(v3.set(0, 0, -1), l.dir);
       a.rotateX(w); a.rotateY(w * 0.6);
       a.translateZ(-0.35); // bury the head
     }
     // Wind for the HUD: the vane's angle as you face down the range (up the screen is downrange).
-    ui.set({ gust: wind.gust.value, windDeg: (Math.atan2(wind.dir.value.x, -wind.dir.value.y) * 180) / Math.PI });
+    const gust = wind.gust.value, windDeg = (Math.atan2(wind.dir.value.x, -wind.dir.value.y) * 180) / Math.PI;
+    if (Math.abs(gust - ui.state.gust) > 0.01 || Math.abs(windDeg - ui.state.windDeg) > 0.5) ui.set({ gust, windDeg });
     // Dust off the straw.
     dust.t += dt;
     if (dust.t < 1.4) {
@@ -475,9 +517,14 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     }
     if (puff.current) puff.current.visible = dust.t < 1.4;
     if (flash.current) flash.current.intensity *= Math.exp(-rawDt * 6);
-    // ---- Camera.
+    // ---- Camera. Three views (your eye at the line, the spotter's walk down the range, the ride on a gold) share one
+    // damped gaze, so a change of view is a turn of the head and never a cut.
     const sh = s.shot;
-    const ride = s.slow && sh && (s.phase === 'flight' || s.phase === 'look');
+    const ride = !!(s.slow && sh && (s.phase === 'flight' || s.phase === 'look'));
+    const view = ride ? 'ride' : s.phase === 'look' && sh ? 'spot' : 'eye';
+    if (view !== s.view) { s.view = view; s.viewT = 0; }
+    s.viewT += rawDt;
+    let kPos = 14, kLook = 14, lock = false;
     if (ride) {
       // Arrow-cam: just behind and above the shaft, all the way in.
       const a = arrows.current[s.arrow]!;
@@ -485,24 +532,32 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
       const at = s.phase === 'flight' ? a.position : sh!.end;
       camPos.copy(at).addScaledVector(d, s.phase === 'flight' ? -2.4 : -3.6).add(v2.set(0.3, 0.42, 0)).add(v3.set(ox, 0, oz));
       look.copy(at).addScaledVector(d, 4).add(v3.set(ox, 0, oz));
-      camera.position.lerp(camPos, 1 - Math.exp(-rawDt * 14));
-      camera.lookAt(look);
     } else if (s.phase === 'look' && sh) {
       // The spotter's view: walk the eye down to where it struck.
       const tgt = sh.hit >= 0 ? buttAt(sh.hit, s.clock, v1, true) : v1.copy(sh.end);
       camPos.set(tgt.x + 1.6, tgt.y + 0.7, tgt.z + 6.5).add(v3.set(ox, 0, oz));
       look.copy(tgt).add(v3.set(ox, 0, oz));
-      camera.position.lerp(camPos, 1 - Math.exp(-rawDt * 3.2));
-      camera.lookAt(look);
+      kPos = 3.2; kLook = 4.5;
     } else {
       const sx = s.yaw + s.sway.x, sy = s.pitch + s.sway.y;
       s.recoil = Math.max(0, s.recoil - rawDt * 3);
       camPos.copy(EYE).add(v3.set(ox, 0, oz)).add(v2.set(0, 0, s.draw * 0.25 - s.recoil * 0.15));
-      look.set(camPos.x + Math.sin(sx) * 30, camPos.y + Math.sin(sy) * 30, camPos.z - Math.cos(sx) * 30);
-      const back = s.phase === 'flight' ? 6 : s.t < 0.6 && s.arrow > 0 ? 7 : 40;
-      camera.position.lerp(camPos, 1 - Math.exp(-rawDt * back));
-      camera.lookAt(look);
+      v1.set(Math.sin(sx), Math.sin(sy), -Math.cos(sx)); // where the sight points; the gaze is set from it below
+      // Coming back to the line the eye eases in over most of a second (it used to change pace in one step, and on
+      // arrow one it jumped from the hall's view). Once it is there the gaze is locked to the aim: any lag between
+      // the two would send the arrow somewhere other than where the sight sits.
+      const u = sstep(s.viewT / 0.8);
+      kPos = s.phase === 'flight' ? 6 : 5 + u * 35;
+      kLook = 5 + u * 115; lock = s.viewT > 1;
     }
+    // The first frame picks the gaze up from wherever the intro card left the camera.
+    if (!s.placed) { s.placed = true; camera.getWorldDirection(lookNow).multiplyScalar(30).add(camera.position); }
+    camera.position.lerp(camPos, ease(rawDt, kPos));
+    // At the line the gaze runs out from where the eye really is, not from where it is headed: on the way back from
+    // the butts the point it turns toward is then always ahead of it, and once home the sight is exact.
+    if (view === 'eye') look.copy(camera.position).addScaledVector(v1, 30);
+    if (lock) lookNow.copy(look); else lookNow.lerp(look, ease(rawDt, kLook));
+    camera.lookAt(lookNow);
     const pc = camera as THREE.PerspectiveCamera;
     const fov = ride ? 50 : s.phase === 'ready' ? 40 - s.draw * 6 : 40;
     if (Math.abs(pc.fov - fov) > 0.05) { pc.fov += (fov - pc.fov) * (1 - Math.exp(-rawDt * 6)); pc.updateProjectionMatrix(); }
@@ -526,7 +581,7 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
         m.position.copy(mid);
         const len = tip.distanceTo(nock);
         m.scale.set(1, len, 1);
-        m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), tip.clone().sub(nock).normalize());
+        m.quaternion.setFromUnitVectors(UP, v4.subVectors(tip, nock).normalize());
       }
       const nk = nocked.current;
       if (nk) { nk.visible = s.phase === 'ready' && s.draw > 0.02; nk.position.set(0.04, 0, nockZ - 1.45); }
@@ -576,7 +631,7 @@ function Hud() {
         {s.line && <div className="line">{s.line}</div>}
         {s.phase === 'ready' && (
           <div className="hint">{s.draw < 0.05
-            ? <><kbd>Space</kbd> or <kbd>click</kbd> hold to draw · <kbd>mouse</kbd> / <kbd>←↑↓→</kbd> aim</>
+            ? <><kbd>Space</kbd> or <kbd>click</kbd> hold to draw · <kbd>mouse</kbd> / <kbd>←↑↓→</kbd> / <kbd>WASD</kbd> aim</>
             : s.draw < 1 ? <>drawing…</> : s.shake > 0.5 ? <>your arm’s shaking: <b>let go</b></> : <>full draw: let go to loose</>}</div>
         )}
       </div>
@@ -587,7 +642,7 @@ function Hud() {
 register({
   id: 'archery', name: 'Pinewatch Archery',
   pitch: 'Five arrows down the long range: two at the near butt, two at the middle, one at the butt swinging on its ropes. Arrows drop and the wind carries them, so hold high and into it. 30 points wins.',
-  keys: [['Space / click', 'hold to draw, let go to loose'], ['Mouse / arrows', 'aim'], ['Esc', 'leave']],
+  keys: [['Space / Enter / click', 'hold to draw, let go to loose'], ['Mouse / arrows / WASD', 'aim'], ['Esc', 'leave']],
   entry: 400,
   Station, Play, Hud,
   view: () => ({ pos: [6, 6, LINE + 9], look: [0, 3, -4] }),

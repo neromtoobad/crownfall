@@ -10,7 +10,7 @@ import * as THREE from 'three';
 import { audio, burst, voice } from '../realm/sound.ts';
 import { Embers, FireLight, Flames, type FlameSpot } from '../realm/fire.tsx';
 import type { Room } from '../realm/rooms.ts';
-import { usePlay } from '../realm/play.ts';
+import { TOUCH, usePlay } from '../realm/play.ts';
 import { gameKeys, gameUi, register, session, type Result } from './host.ts';
 import './forge.css';
 
@@ -215,7 +215,7 @@ function Station() {
   return (
     <group position={[AT[0], 0, AT[1]]}>
       <Anvil m={m} />
-      <Hearth m={m} />
+      <Hearth m={m} pump={pumpNow} />
       <Dressing m={m} />
       {!playing && <>
         {/* A cold billet and a hammer waiting on the anvil. */}
@@ -246,7 +246,14 @@ const ARM_DIR = new THREE.Vector3(0.38, 0.62, 0.95).normalize();
 const ARM_Q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), ARM_DIR);
 const ARM_MID = ARM_DIR.clone().multiplyScalar(0.24), SLEEVE_MID = ARM_DIR.clone().multiplyScalar(0.72);
 const track = { on: false, now: 0, beats: [] as number[], done: [] as boolean[] };
-const ui = gameUi({ heat: 0, quality: 1, landed: 0, cracks: 0, judge: '', judgeT: 0, combo: 0, line: 'Pump the bellows: tap Space until the steel runs white.', phase: 'heat' as Phase, temp: 0 });
+/** How hard the bellows are blowing, 0..1. The round writes it and the hearth that always stands in the hall reads it
+ *  (the round used to mount a second hearth on top of the first: doubled flames, and a second bellows board left at rest). */
+const pumpNow = { current: 0 };
+const GREY = new THREE.Color('#a3a8b0'), RING_HOT = new THREE.Color('#ffffff'), RING_WARM = new THREE.Color('#ffc04a');
+const REVEAL_AT = new THREE.Vector3(1.6, 2.6, 1.1);
+const ease = (dt: number, k: number) => 1 - Math.exp(-dt * k);
+const sstep = (u: number) => { u = Math.min(1, Math.max(0, u)); return u * u * (3 - 2 * u); };
+const ui = gameUi({ heat: 0, quality: 1, landed: 0, cracks: 0, judge: '', judgeT: 0, combo: 0, line: `Pump the bellows: tap ${TOUCH ? 'Strike' : 'Space'} until the steel runs white.`, phase: 'heat' as Phase, temp: 0 });
 type Phase = 'heat' | 'carry' | 'strike' | 'back' | 'quench' | 'reveal' | 'over';
 type Judge = 'perfect' | 'good' | 'miss';
 const CREDIT: Record<Judge, number> = { perfect: 1, good: 0.62, miss: 0 };
@@ -259,15 +266,20 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
   const st = useRef({
     phase: 'heat' as Phase, pt: 0, heat: 0, T: 0.12, pump: 0, score: 0, grow: 0, judged: 0, perfects: 0, combo: 0,
     beats: [] as number[], done: [] as boolean[], spots: [] as number[], swing: 9, swingFrom: 0, angle: -0.4, shake: 0, flash: 0, squash: 0,
-    cracks: [] as { u: number; v: number; a: number }[], shown: -1, L: 0.7, hw: 0.11, tang: 0.06, th: 0.12, quench: 0, ended: false, clicks: 0,
+    cracks: [] as { u: number; v: number; a: number }[], shown: 0, built: 0, L: 0.7, hw: 0.11, tang: 0.06, th: 0.12, quench: 0, ended: false, clicks: 0,
+    arm: 0, placed: false,
   });
-  const pumpRef = useRef(0);
   const billet = useRef<THREE.Group>(null), blade = useRef<THREE.Mesh>(null), hammer = useRef<THREE.Group>(null), hammerAt = useRef<THREE.Group>(null);
   const ringRef = useRef<THREE.Mesh>(null), target = useRef<THREE.Mesh>(null), glow = useRef<THREE.PointLight>(null), flash = useRef<THREE.PointLight>(null);
   const crackRefs = useRef<(THREE.Group | null)[]>([]);
   const camPos = useMemo(() => new THREE.Vector3(), []), camLook = useMemo(() => new THREE.Vector3(), []);
   const lookNow = useRef(new THREE.Vector3(room.x + F.x, FH, room.z + AT[1] + F.z));
   const tmpC = useMemo(() => new THREE.Color(), []);
+  // Scratch vectors for the frame loop, so nothing is allocated sixty times a second.
+  const V = useMemo(() => ({ anvil: new THREE.Vector3(), forge: new THREE.Vector3(), trough: new THREE.Vector3(), spot: new THREE.Vector3(), hit: new THREE.Vector3(), from: new THREE.Vector3(), tmp: new THREE.Vector3() }), []);
+  const fire = useRef<THREE.PointLight>(null);
+  const init = useMemo(() => bladeGeo(0).g, []);
+  const geoNow = useRef(init);
   // Sparks: one pool of points, each with a velocity and a life.
   const N = 420;
   const sparks = useMemo(() => {
@@ -294,6 +306,14 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     window.addEventListener('pointerdown', down);
     return () => window.removeEventListener('pointerdown', down);
   }, []);
+  // What the round made is passed to the scene as props, which the renderer never frees by itself: let it go here, and
+  // let the hall's bellows fall back to rest.
+  useEffect(() => () => {
+    pumpNow.current = 0;
+    geoNow.current.dispose(); sparks.g.dispose(); sparks.mat.dispose();
+    steamMats[0].map?.dispose(); steamMats.forEach((sm) => sm.dispose());
+    for (const mat of Object.values(m)) { const sm = mat as THREE.MeshStandardMaterial; sm.map?.dispose(); sm.emissiveMap?.dispose(); mat.dispose(); }
+  }, [m, sparks, steamMats]);
 
   const spray = (at: THREE.Vector3, n: number, power: number) => {
     const pos = sparks.g.attributes.position.array as Float32Array;
@@ -340,16 +360,20 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     const s = st.current;
     const dt = Math.min(rawDt, 0.05);
     const ks = gameKeys();
-    const taps = ks.filter((k) => k === ' ' || k === 'e' || k === 'f').length + s.clicks;
+    const taps = ks.filter((k) => k === ' ' || k === 'enter' || k === 'e' || k === 'f').length + s.clicks;
     s.clicks = 0;
+    // The phase clock before and after this frame: a sound due at time c plays on the one frame that steps over c.
+    // (Comparing against pt - dt never fired for c = 0, so the first count-in ring was silent.)
+    const prev = s.pt;
     s.pt += dt;
+    const due = (c: number) => prev <= c && s.pt > c;
     // ---- Where things are, in the station's frame.
-    const anvilAt = new THREE.Vector3(0, TOP + s.th / 2 + 0.01, 0);
-    const forgeAt = new THREE.Vector3(F.x + 0.25, FH + 0.07, F.z + 0.1);
-    const troughAt = new THREE.Vector3(TR.x, 0.45, TR.z);
+    const anvilAt = V.anvil.set(0, TOP + s.th / 2 + 0.01, 0);
+    const forgeAt = V.forge.set(F.x + 0.25, FH + 0.07, F.z + 0.1);
+    const troughAt = V.trough.set(TR.x, 0.7, TR.z); // just over the water, so the carry ends where the plunge begins
     const b = billet.current!;
-    let spot = new THREE.Vector3();
-    const spotOf = (u: number) => new THREE.Vector3(THREE.MathUtils.clamp(-(s.L - s.tang) / 2 + u * s.L, -0.62, 0.62), TOP + s.th + 0.012, 0);
+    const spot = V.spot;
+    const spotOf = (u: number, out: THREE.Vector3) => out.set(THREE.MathUtils.clamp(-(s.L - s.tang) / 2 + u * s.L, -0.62, 0.62), TOP + s.th + 0.012, 0);
 
     if (s.phase === 'heat') {
       // Pump: each tap blows the coals bright and the steel climbs; it creeps up on its own too.
@@ -371,9 +395,10 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
         // Into the water.
         if (s.quench === 0) { hissQ(); steam.current.forEach((p, i) => { p.t = -i * 0.06; p.x = (Math.random() - 0.5) * 1.4; p.z = (Math.random() - 0.5) * 0.5; p.s = 0.5 + Math.random() * 0.5; }); s.shake = 0.3; }
         s.quench += dt;
-        b.position.y = troughAt.y + 0.25 - Math.min(1, s.quench / 0.25) * 0.42 + Math.max(0, s.quench - 1.0) * 1.2;
+        // Down under the water, held there, then lifted clear: eased at both ends, and the reveal starts from wherever it is.
+        b.position.y = troughAt.y - sstep(s.quench / 0.25) * 0.42 + sstep((s.quench - 1) / 0.6) * 0.72;
         s.T = Math.max(0, s.T - dt * 2.2);
-        if (s.quench > 1.6) { s.phase = 'reveal'; s.pt = 0; const q = s.score / TOTAL; ui.set({ phase: 'reveal', line: q >= 0.6 ? 'Out of the water, grey and true.' : s.cracks.length > 8 ? 'Out of the water. The cracks show.' : 'Out of the water. Not quite enough.' }); }
+        if (s.quench > 1.6) { s.phase = 'reveal'; s.pt = 0; V.from.copy(b.position); const q = s.score / TOTAL; ui.set({ phase: 'reveal', line: q >= 0.6 ? 'Out of the water, grey and true.' : s.cracks.length > 8 ? 'Out of the water. The cracks show.' : 'Out of the water. Not quite enough.' }); }
       } else if (u >= 1 && s.phase === 'carry') { s.phase = 'strike'; s.pt = 0; schedule(s); ui.set({ phase: 'strike', heat: s.heat, line: s.heat === 0 ? 'Strike as the ring closes and the steel flares.' : s.heat === 1 ? 'Faster now. The steel won’t wait.' : 'The last heat. Mind the swing in it.' }); }
       else if (u >= 1 && s.phase === 'back') { s.phase = 'heat'; s.pt = 0; s.heat++; ui.set({ phase: 'heat', heat: s.heat, line: 'Back in the fire. Pump!' }); }
     } else if (s.phase === 'strike') {
@@ -383,21 +408,21 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
       s.T = THREE.MathUtils.lerp(1.15, 0.42, Math.min(1, s.pt / (last + 0.3)));
       // Count-in taps, and in the first two heats a quiet tick on every beat.
       const iv = IV[s.heat];
-      for (const c of [0, iv * 1.1]) if (s.pt - dt < c && s.pt >= c) { ring(0.22, 0.25, 1500); }
-      if (s.heat < 2) for (const bt of s.beats) if (s.pt - dt < bt && s.pt >= bt) tick(s.heat === 0 ? 1 : 0.5);
+      if (due(0) || due(iv * 1.1)) ring(0.22, 0.25, 1500);
+      if (s.heat < 2) for (const bt of s.beats) if (due(bt)) tick(s.heat === 0 ? 1 : 0.5);
       // The strike.
       for (let k = 0; k < taps; k++) {
-        if (s.swing < 0.12) break; // the hammer is still coming down
+        if (s.swing < 0.12) break; // the hammer is still coming down (the closest two beats are 0.35 s apart, so this only drops a double tap)
         s.swing = 0; s.swingFrom = s.angle;
         let best = -1, err = 9;
         s.beats.forEach((bt, i) => { if (!s.done[i] && Math.abs(s.pt - bt) < Math.abs(err)) { err = s.pt - bt; best = i; } });
-        const sp = spotOf(best >= 0 ? s.spots[best] : 0.5);
+        const sp = spotOf(best >= 0 ? s.spots[best] : 0.5, V.hit);
         if (best >= 0 && Math.abs(err) < 0.3) judge(s, best, Math.abs(err) < 0.07 ? 'perfect' : Math.abs(err) < 0.155 ? 'good' : 'miss', sp);
         else { burst(700, 2, 0.12, 0.08); ui.set({ line: 'Wait for the ring.' }); }
         if (best >= 0 && Math.abs(err) < 0.3 && Math.abs(err) >= 0.155) { clank(); s.shake = 0.25; spray(sp, 8, 0.4); }
       }
       // A beat let go by.
-      s.beats.forEach((bt, i) => { if (!s.done[i] && s.pt > bt + 0.2) { judge(s, i, 'miss', spotOf(s.spots[i])); clank(); ui.set({ line: 'Too slow! A crack runs.' }); } });
+      s.beats.forEach((bt, i) => { if (!s.done[i] && s.pt > bt + 0.2) { judge(s, i, 'miss', spotOf(s.spots[i], V.hit)); clank(); ui.set({ line: 'Too slow! A crack runs.' }); } });
       if (s.done.every(Boolean) && s.pt > last + 0.55) {
         track.on = false;
         if (s.heat < HEATS - 1) { s.phase = 'back'; s.pt = 0; ui.set({ phase: 'back', line: 'It’s cooling. Back to the fire.' }); }
@@ -406,7 +431,7 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     } else if (s.phase === 'reveal') {
       // Lifted out, turned to the light.
       const u = Math.min(1, s.pt / 1.2), e = u * u * (3 - 2 * u);
-      b.position.lerpVectors(new THREE.Vector3(troughAt.x, troughAt.y + 0.5, troughAt.z), new THREE.Vector3(1.6, 2.6, 1.1), e);
+      b.position.lerpVectors(V.from, REVEAL_AT, e);
       b.rotation.set(e * 0.5, -e * 0.6, e * 0.9);
       if (s.pt > 3.2 && !s.ended) {
         s.ended = true; s.phase = 'over';
@@ -420,15 +445,16 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     let nextI = -1;
     if (s.phase === 'strike') nextI = s.done.findIndex((d) => !d);
     const toBeat = nextI >= 0 ? s.beats[nextI] - s.pt : 9;
-    if (nextI >= 0) spot = spotOf(s.spots[nextI]); else spot = spotOf(0.5);
+    spotOf(nextI >= 0 ? s.spots[nextI] : 0.5, spot);
     track.now = s.pt;
-    // ---- The blade grows smoothly toward what you've earned.
+    // ---- The blade grows smoothly toward what you've earned. The mesh is only rebuilt when the growth would show.
     const p = Math.min(1, s.grow / TOTAL);
-    if (Math.abs(p - s.shown) > 0.003) {
-      s.shown += (p - s.shown) * Math.min(1, dt * 10); if (s.shown < 0) s.shown = p;
-      const r = bladeGeo(Math.max(0, s.shown));
-      blade.current!.geometry.dispose(); blade.current!.geometry = r.g;
-      s.L = r.L; s.hw = r.hw; s.tang = r.tang; s.th = r.th;
+    s.shown += (p - s.shown) * ease(dt, 10);
+    if (Math.abs(p - s.shown) < 0.0015) s.shown = p;
+    if (Math.abs(s.shown - s.built) > 0.004 || (s.shown === p && s.built !== p)) {
+      const r = bladeGeo(s.shown);
+      geoNow.current.dispose(); geoNow.current = blade.current!.geometry = r.g;
+      s.built = s.shown; s.L = r.L; s.hw = r.hw; s.tang = r.tang; s.th = r.th;
     }
     // Squash on a blow.
     s.squash = Math.max(0, s.squash - dt * 7);
@@ -439,12 +465,16 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     m.steel.emissive.copy(tmpC);
     m.steel.emissiveIntensity = (s.T > 0.12 ? 0.8 : 0) + flare * 0.9;
     if (s.phase === 'reveal' || s.phase === 'over' || (s.phase === 'quench' && s.quench > 0.3)) {
-      m.steel.color.set('#a3a8b0'); m.steel.metalness = 0.95; m.steel.roughness = 0.26;
+      // The black scale turns to bright steel over a moment in the water, not in one frame.
+      const k = ease(dt, 5);
+      m.steel.color.lerp(GREY, k); m.steel.metalness += (0.95 - m.steel.metalness) * k; m.steel.roughness += (0.26 - m.steel.roughness) * k;
     }
-    pumpRef.current = s.pump;
-    if (glow.current) { glow.current.position.copy(b.position).add(new THREE.Vector3(0, 0.5, 0.3)); glow.current.color.copy(tmpC); glow.current.intensity = Math.max(0, s.T - 0.2) * 16 + flare * 14; }
+    // Each pump blows the hall's hearth brighter, and the firelight on the smith with it.
+    pumpNow.current = s.pump;
+    if (fire.current) fire.current.intensity = 60 + s.pump * 110 + Math.sin(clock.elapsedTime * 9) * 4;
+    if (glow.current) { glow.current.position.copy(b.position); glow.current.position.y += 0.5; glow.current.position.z += 0.3; glow.current.color.copy(tmpC); glow.current.intensity = Math.max(0, s.T - 0.2) * 16 + flare * 14; }
     s.flash = Math.max(0, s.flash - dt * 5);
-    if (flash.current) { flash.current.position.copy(spot).add(new THREE.Vector3(0, 0.3, 0.2)); flash.current.intensity = s.flash * 70; }
+    if (flash.current) { flash.current.position.copy(spot); flash.current.position.y += 0.3; flash.current.position.z += 0.2; flash.current.intensity = s.flash * 70; }
     // ---- The approach ring.
     const rr = ringRef.current!, tg = target.current!;
     const appr = IV[s.heat] * 1.25;
@@ -454,7 +484,7 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
       const k = Math.max(0, toBeat / appr);
       rr.position.copy(spot); rr.scale.setScalar(1 + k * 5);
       (rr.material as THREE.MeshBasicMaterial).opacity = 0.35 + 0.65 * (1 - k);
-      (rr.material as THREE.MeshBasicMaterial).color.set(Math.abs(toBeat) < 0.07 ? '#ffffff' : '#ffc04a');
+      (rr.material as THREE.MeshBasicMaterial).color.copy(Math.abs(toBeat) < 0.07 ? RING_HOT : RING_WARM);
     }
     if (tg.visible) { tg.position.copy(spot); (tg.material as THREE.MeshBasicMaterial).opacity = 0.35 + flare * 0.6; }
     // ---- The hammer: held up at rest, winding up as the beat comes, a fast blow, a bounce.
@@ -462,12 +492,17 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     const raise = s.phase === 'strike' ? -0.35 - 0.85 * THREE.MathUtils.clamp(1 - toBeat / (IV[s.heat] * 0.8), 0, 1) : -0.9;
     if (s.swing < 0.06) s.angle = THREE.MathUtils.lerp(s.swingFrom, 0.0, s.swing / 0.06);
     else if (s.swing < 0.22) s.angle = THREE.MathUtils.lerp(0.0, -0.45, (s.swing - 0.06) / 0.16);
-    else s.angle += (raise - s.angle) * Math.min(1, dt * 9);
+    else s.angle += (raise - s.angle) * ease(dt, 9);
     const hm = hammer.current!, ha = hammerAt.current!;
     const hx = s.phase === 'strike' ? spot.x : 0.2;
-    ha.position.lerp(new THREE.Vector3(hx + 0.95, TOP + s.th + 0.17, 0.22), 1 - Math.exp(-dt * 14));
+    // The arm reaches in as the billet lands on the anvil and draws back toward you when the heat is done, where it
+    // used to blink on and off with the phase.
+    const armWant = s.phase === 'strike' || (s.phase === 'carry' && s.pt > 0.35) ? 1 : 0;
+    s.arm += (armWant - s.arm) * ease(dt, 7);
+    const away = 1 - s.arm;
+    ha.position.lerp(V.tmp.set(hx + 0.95 + away * 0.7, TOP + s.th + 0.17 - away * 0.35, 0.22 + away * 1.9), ease(dt, 14));
     hm.rotation.z = s.angle;
-    ha.visible = s.phase === 'strike';
+    ha.visible = s.arm > 0.02;
     // ---- Cracks on the steel.
     crackRefs.current.forEach((c, i) => {
       if (!c) return;
@@ -497,15 +532,17 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
       if (mm.visible) { mm.position.set(TR.x + p.x * (1 + p.t * 0.3), 0.75 + p.t * 1.1, TR.z + p.z); mm.scale.setScalar(p.s * (0.8 + p.t * 1.3)); steamMats[i].opacity = 0.55 * Math.min(1, p.t * 5) * (1 - p.t / 2.2); }
     });
     // ---- The camera: on the forge while it heats, over the anvil while you strike, on the trough, then the blade.
-    const look = new THREE.Vector3(), pos = new THREE.Vector3();
+    const look = V.tmp, pos = camPos;
     if (s.phase === 'heat' || s.phase === 'back') { pos.set(F.x + 2.7, 3.4, F.z + 3.6); look.set(F.x, FH + 0.1, F.z); }
     else if (s.phase === 'strike' || s.phase === 'carry') { pos.set(0.55, TOP + 2.05, 2.95); look.set(0, TOP, -0.15); }
     else if (s.phase === 'quench') { pos.set(TR.x - 1.4, 2.6, TR.z + 3.2); look.set(TR.x, 0.8, TR.z); }
     else { pos.set(0.6, 2.9, 4.0); look.copy(b.position); }
     camPos.set(room.x + AT[0] + pos.x, pos.y, room.z + AT[1] + pos.z);
     camLook.set(room.x + AT[0] + look.x, look.y, room.z + AT[1] + look.z);
-    camera.position.lerp(camPos, 1 - Math.exp(-dt * 3.2));
-    lookNow.current.lerp(camLook, 1 - Math.exp(-dt * 4));
+    // The first frame picks the gaze up from wherever the intro card left it, so the round opens on a turn, not a cut.
+    if (!s.placed) { s.placed = true; camera.getWorldDirection(lookNow.current).multiplyScalar(camLook.distanceTo(camera.position)).add(camera.position); }
+    camera.position.lerp(camPos, ease(dt, 3.2));
+    lookNow.current.lerp(camLook, ease(dt, 4));
     camera.lookAt(lookNow.current);
     s.shake = Math.max(0, s.shake - dt * 2.2);
     if (s.shake > 0) { const k = s.shake * s.shake; camera.rotateZ(Math.sin(clock.elapsedTime * 53) * k * 0.04); camera.rotateX(Math.sin(clock.elapsedTime * 37) * k * 0.05); }
@@ -513,10 +550,10 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     if (Math.abs(ui.state.temp - s.T) > 0.03) ui.set({ temp: s.T });
   });
 
-  const init = useMemo(() => bladeGeo(0).g, []);
   return (
     <group position={[AT[0], 0, AT[1]]}>
-      <Hearth m={m} pump={pumpRef} />
+      {/* The round's share of the firelight (the hall's own hearth carries the flames, the coals and the bellows). */}
+      <pointLight ref={fire} position={[F.x, FH + 0.8, F.z + 0.3]} color="#ff7a2a" intensity={60} distance={13} />
       <group ref={billet} position={[F.x, FH + 0.07, F.z]}>
         <mesh ref={blade} geometry={init} material={m.steel} castShadow />
         {/* Tongs gripping the tang, running off toward you. */}
@@ -603,7 +640,9 @@ function Hud() {
         {s.judge && age < 700 && <div key={s.judgeT} className={`big frg-judge ${s.judge}`}>{words[s.judge]}{s.combo >= 3 && s.judge !== 'miss' && <small> ×{s.combo}</small>}</div>}
         <div className="line">{s.line}</div>
         <Track />
-        <div className="hint">{s.phase === 'heat' ? <><kbd>Space</kbd> tap to pump the bellows</> : <><kbd>Space</kbd> or click to strike as the ring closes</>}</div>
+        <div className="hint">{s.phase === 'heat' ? <><kbd>Space</kbd> or click, again and again, to pump the bellows</>
+          : s.phase === 'strike' ? <><kbd>Space</kbd> or click to strike as the ring closes</>
+          : s.phase === 'carry' ? <>Ready the hammer</> : s.phase === 'back' ? <>Ready the bellows</> : <>The quench shows what the blade is worth</>}</div>
       </div>
     </>
   );
@@ -612,7 +651,7 @@ function Hud() {
 register({
   id: 'forge', name: 'The Forge',
   pitch: 'Three heats to make a blade. Pump the bellows till the steel runs white, then strike on the beat as the ring closes. Good blows draw the blade out; misses crack it. Finish with 60% quality to win.',
-  keys: [['Space', 'pump the bellows / strike'], ['Click', 'strike'], ['Esc', 'leave']],
+  keys: [['Space / Enter', 'pump the bellows / strike'], ['Click', 'pump / strike'], ['Esc', 'leave']],
   entry: 400,
   Station, Play, Hud,
   view: () => ({ pos: [AT[0] + 1.6, 4.4, AT[1] + 6.4], look: [AT[0] - 1.6, 1.5, AT[1] - 0.8] }),

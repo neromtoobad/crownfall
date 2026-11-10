@@ -21,6 +21,12 @@ const LINE = -4.6;       // the throwing line
 const AXES = 5, TO_WIN = 25;
 const SWEET: [number, number] = [0.66, 0.86];
 const RINGS: [number, number][] = [[0.3, 10], [0.66, 5], [R * 0.97, 2]];
+// How the boar runs on its rail, by stage: still for two axes, then running, then running faster on the last.
+const RUN_REACH = [0, 1.7, 2.3], RUN_PACE = [1.25, 1.25, 1.9];
+// Where an axe's head sits once it has bitten: in the slab's face, or deeper, in the boards behind.
+const BITE = TZ + 0.44, BOARD = TZ - 0.32;
+// The angles (about x) an axe arrives at: bit-first, back-to-front (a mis-throw), and lying flat in the straw.
+const STUCK = -0.42, FLIPPED = STUCK - Math.PI, LYING = Math.PI / 2 - 0.15;
 
 // ---- The axe: an ash handle and a bearded iron head, built round the head (it spins about there in flight).
 const axeGeo = (() => {
@@ -157,7 +163,7 @@ const ui = gameUi({ axe: 1, score: 0, phase: 'power' as Phase, power: 0, line: '
 
 /** What became of each axe once it landed. */
 interface Landed { kind: 'target' | 'board' | 'straw'; local: THREE.Vector3; at: number; tilt: number }
-interface Flying { from: THREE.Vector3; to: THREE.Vector3; t: number; dur: number; spin: number; bounce: boolean; obj: THREE.Group }
+interface Flying { from: THREE.Vector3; to: THREE.Vector3; t: number; dur: number; rx: number; bounce: boolean; down: boolean; obj: THREE.Group }
 
 const CHIPS = 46;
 function thunk(loud = 1) { burst(120, 1.3, 0.55 * loud, 0.18); burst(800, 2.2, 0.14 * loud, 0.07); burst(2800, 5, 0.05 * loud, 0.05, 0.008); }
@@ -186,23 +192,37 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     return { g, v: Array.from({ length: CHIPS }, () => new THREE.Vector3()), p: Array.from({ length: CHIPS }, () => new THREE.Vector3()), t: 9 };
   }, []);
   const st = useRef({
-    phase: 'power' as Phase, t: 0, aimT: 0, clock: 0, axe: 0, score: 0, aim: new THREE.Vector3(0, TY, TZ + 0.3), power: 0,
-    fly: undefined as Flying | undefined, landed: [] as (Landed | undefined)[], slow: 0, trauma: 0, push: 0, tx: 0, hits: [] as number[], hold: 0,
+    phase: 'power' as Phase, t: 0, aimT: 0, axe: 0, score: 0, aim: new THREE.Vector3(0, TY, TZ + 0.3), power: 0,
+    fly: undefined as Flying | undefined, landed: [] as (Landed | undefined)[], slow: 0, trauma: 0, push: 0, tx: 0, hits: [] as number[],
+    // The boar's sway (a running phase with an eased reach and pace), and the eased bits of show: how far the axe in
+    // your hand is drawn up, how solid the aiming mark is, whether the needle is in the gold, whether the camera is set.
+    ph: 0, reach: 0, pace: RUN_PACE[0], draw: 0, mark: 0, gold: false, placed: false,
   });
   useMemo(() => { ui.reset(); ui.set({ hits: [] }); }, []);
   if (import.meta.env.DEV) Object.assign(window, { __axes: st.current });
   const camPos = useMemo(() => new THREE.Vector3(), []), look = useMemo(() => new THREE.Vector3(), []), tmp = useMemo(() => new THREE.Vector3(), []);
+  const lookNow = useMemo(() => new THREE.Vector3(), []);
+  // One material for the whole aiming mark, so it can fade in and out as one.
+  const markMat = useMemo(() => new THREE.MeshBasicMaterial({ color: '#ffe28a', transparent: true, opacity: 0, toneMapped: false, depthTest: false }), []);
   const ox = room.x, oz = room.z;
 
-  /** Where the boar's centre is (x), at a clock time, for this throw: still for two axes, then running on its rail. */
-  const targetX = (clock: number, axe: number) => (axe < 2 ? 0 : axe < 4 ? Math.sin(clock * 1.25) * 1.7 : Math.sin(clock * 1.9) * 2.3);
+  /** Where the drifting mark is at this instant of the aim: a slow figure-of-eight over the boar (a smaller one once the
+   * boar runs, so the boar does the moving and you lead it). */
+  const aimAt = (s: typeof st.current) => {
+    const sp = 1 + s.axe * 0.12, still = s.axe < 2;
+    s.aim.set(Math.sin(s.aimT * (still ? 1.5 : 0.9) * sp) * (still ? 1.6 : 0.35), TY + Math.sin(s.aimT * (still ? 1.0 : 0.7) * sp + 1.3) * (still ? 1.05 : 0.3), TZ + 0.3);
+  };
 
-  /** Put a landed axe where it belongs: riding the target, stuck in the boards, or lying in the straw. */
+  /** Put a landed axe where it belongs: riding the target, stuck in the boards, or lying in the straw. The flight ends
+   * at the slab's face with the axe upright, so the last of the way (through to the boards, and the lean it comes to
+   * rest at) is eased over the first few frames after the bite instead of being jumped to. */
   const place = (a: THREE.Group, l: Landed, now: number) => {
-    const q = Math.exp(-(now - l.at) * 5) * Math.sin((now - l.at) * 38) * 0.14; // the handle quivers, then settles
-    if (l.kind === 'target') { a.position.set(st.current.tx + l.local.x, TY + l.local.y, TZ + 0.44); a.rotation.set(-0.42 + q, 0, l.tilt); }
-    else if (l.kind === 'board') { a.position.set(l.local.x, l.local.y, TZ - 0.32); a.rotation.set(-0.5 + q, 0, l.tilt); }
-    else { a.position.copy(l.local); a.rotation.set(Math.PI / 2 - 0.15, 0, l.tilt); }
+    const age = Math.max(0, now - l.at);
+    const q = Math.exp(-age * 5) * Math.sin(age * 38) * 0.14; // the handle quivers, then settles
+    const lean = 1 - Math.exp(-age * 28), sink = 1 - Math.exp(-age * 45);
+    if (l.kind === 'target') { a.position.set(st.current.tx + l.local.x, TY + l.local.y, BITE); a.rotation.set(STUCK + q, 0, l.tilt * lean); }
+    else if (l.kind === 'board') { a.position.set(l.local.x, l.local.y, BITE + (BOARD - BITE) * sink); a.rotation.set(STUCK - 0.08 * sink + q, 0, l.tilt * lean); }
+    else { a.position.copy(l.local); a.rotation.set(LYING, 0, l.tilt); }
   };
 
   useFrame(({ clock: c }, rawDt) => {
@@ -210,37 +230,54 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     rawDt = Math.min(rawDt, 0.05);
     const dt = rawDt * (s.slow > 0 ? 0.25 : 1);
     s.slow = Math.max(0, s.slow - rawDt);
-    s.t += dt; s.clock += dt;
+    s.t += dt;
     const ks = gameKeys();
     const pressed = ks.some((k) => k === ' ' || k === 'e' || k === 'enter');
-    s.tx = targetX(s.clock, s.axe);
+    // The boar on its rail. Its sway is a running phase with an eased reach and pace, so when a later axe sets it
+    // running (or running faster) it picks up from where it hangs instead of jumping onto a new curve, and the axes
+    // stuck in it do not jump with it. Once the last axe is in, it coasts back to the middle.
+    const stage = s.phase === 'done' || s.axe < 2 ? 0 : s.axe < 4 ? 1 : 2;
+    const ek = 1 - Math.exp(-dt * 3);
+    s.reach += (RUN_REACH[stage] - s.reach) * ek;
+    if (stage) s.pace += (RUN_PACE[stage] - s.pace) * ek;
+    s.ph += dt * s.pace;
+    s.tx = Math.sin(s.ph) * s.reach;
     if (target.current) target.current.position.x = s.tx;
     if (s.phase === 'power') {
       // First the swing: the needle sweeps up and down (quicker each throw); stop it in the gold.
       s.power = 0.5 - 0.5 * Math.cos(s.t * (2.6 + s.axe * 0.3));
       ui.set({ power: s.power });
-      if (pressed) {
-        s.phase = 'aim'; s.t = 0; s.aimT = Math.random() * 6;
-        const good = s.power >= SWEET[0] && s.power <= SWEET[1];
-        burst(good ? 1500 : 700, 9, 0.07, 0.08);
-        ui.set({ phase: 'aim', line: good ? (s.axe < 2 ? 'Good swing. Now throw when the mark is on the boar.' : 'Good swing. Throw just before the boar runs under the mark.') : s.power < SWEET[0] ? 'Soft swing: it will drop low. Throw a touch high.' : 'Hard swing: it will fly high. Throw a touch low.' });
+      // A soft tick each time the needle comes into the gold, so the swing can be timed by ear as well as by eye.
+      const gold = s.power >= SWEET[0] && s.power <= SWEET[1];
+      if (gold && !s.gold) burst(1750, 14, 0.03, 0.035);
+      s.gold = gold;
+      // A press in the first instant (the needle is still at the bottom) can only be a stray one: let it go by.
+      if (pressed && s.t > 0.12) {
+        s.phase = 'aim'; s.t = 0; s.aimT = Math.random() * 6; s.gold = false;
+        aimAt(s); // so the mark fades in where it is, not where the last throw left it
+        s.push = Math.max(s.push, 0.12);
+        burst(gold ? 1500 : 700, 9, 0.07, 0.08);
+        ui.set({ phase: 'aim', line: gold ? (s.axe < 2 ? 'Good swing. Now throw when the mark is on the boar.' : 'Good swing. Throw just before the boar runs under the mark.') : s.power < SWEET[0] ? 'Soft swing: it will drop low. Throw a touch high.' : 'Hard swing: it will fly high. Throw a touch low.' });
       }
     } else if (s.phase === 'aim') {
-      // Then the mark: it drifts over the boar in a slow figure-of-eight (a smaller one once the boar runs, so the
-      // boar does the moving and you lead it). Space throws, at once.
+      // Then the mark drifts over the boar. Space throws, at once; but not in the first fifth of a second, so a double
+      // tap on the swing (or two fingers on the keys) cannot throw the axe before the mark has even appeared.
       s.aimT += dt;
-      const sp = 1 + s.axe * 0.12, still = s.axe < 2;
-      s.aim.set(Math.sin(s.aimT * (still ? 1.5 : 0.9) * sp) * (still ? 1.6 : 0.35), TY + Math.sin(s.aimT * (still ? 1.0 : 0.7) * sp + 1.3) * (still ? 1.05 : 0.3), TZ + 0.3);
-      if (pressed) {
+      aimAt(s);
+      if (pressed && s.t > 0.2) {
         const e = s.power - (SWEET[0] + SWEET[1]) / 2;
         const bounce = Math.abs(e) > 0.27;
         const dur = 0.5;
-        // Soft drops low, hard flies high, plus a little shake of the hand.
-        const to = s.aim.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.12, e * 2.7 + (Math.random() - 0.5) * 0.08, 0));
+        // Soft drops low, hard flies high, plus a little shake of the hand. It flies to the slab's face.
+        const to = new THREE.Vector3(s.aim.x + (Math.random() - 0.5) * 0.12, s.aim.y + e * 2.7 + (Math.random() - 0.5) * 0.08, BITE);
         const obj = axes.current[s.axe]!;
         obj.visible = true;
         const r = racked.current[s.axe]; if (r) r.visible = false;
-        s.fly = { from: new THREE.Vector3(2.3, 4.6, LINE - 0.2), to, t: 0, dur, spin: Math.PI * 2 * (bounce ? 1.5 : 1), bounce, obj };
+        // It leaves from the hand, as it was held, so the throw is one motion and not a swap of two axes.
+        const h = held.current;
+        s.fly = { from: h ? h.position.clone() : new THREE.Vector3(2.45, 4, LINE - 0.3), to, t: 0, dur, rx: h ? h.rotation.x : 1, bounce, down: false, obj };
+        obj.position.copy(s.fly.from); obj.rotation.set(s.fly.rx, 0.25, -0.25);
+        s.draw = 0;
         s.phase = 'flight'; s.t = 0; s.push = 1;
         whoosh(dur); burst(200, 2, 0.14, 0.08);
         ui.set({ phase: 'flight', line: '' });
@@ -251,7 +288,10 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
       const u = Math.min(1, f.t / f.dur);
       tmp.lerpVectors(f.from, f.to, u); tmp.y += Math.sin(u * Math.PI) * 0.6;
       f.obj.position.copy(tmp);
-      f.obj.rotation.set(-0.42 + f.spin * (1 - u), 0, 0);
+      // End over end, forward, from the angle it was held at: one full turn and it arrives bit-first; a mis-throw
+      // turns half as much again and arrives back-to-front.
+      const endX = f.bounce ? FLIPPED : STUCK, side = (1 - u) * (1 - u);
+      f.obj.rotation.set(endX + (f.rx + Math.PI * 2 - endX) * (1 - u), 0.25 * side, -0.25 * side);
       if (u >= 1) {
         const lx = f.to.x - s.tx, ly = f.to.y - TY, r = Math.hypot(lx, ly);
         const onFace = r <= R * 0.97;
@@ -262,7 +302,8 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
         if (f.bounce) {
           clang(); s.trauma = 0.3; groan();
           line = s.power < SWEET[0] ? 'Too soft. Handle first, and it bounces off.' : 'Too hard. Over-spun, it clatters away.';
-          s.landed[s.axe] = { kind: 'straw', local: new THREE.Vector3(f.to.x * 0.6 + (Math.random() - 0.5), 0.95 + Math.random() * 0.6, TZ + 0.9), at: now, tilt: Math.random() * 2 };
+          // It comes to rest on top of the bales (their top is at 0.84, their front at TZ + 0.45), not in the air before them.
+          s.landed[s.axe] = { kind: 'straw', local: new THREE.Vector3(f.to.x * 0.6 + (Math.random() - 0.5), 0.9 + Math.random() * 0.08, TZ + 0.3 + Math.random() * 0.2), at: now, tilt: 0.5 + Math.random() * 1.5 };
         } else if (!onFace) {
           thunk(0.7); s.trauma = 0.3; groan();
           line = 'Into the boards. Wide of the boar.';
@@ -286,13 +327,16 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
       const f = s.fly!;
       const l = s.landed[s.axe]!;
       if (f.bounce && s.t < 0.9) {
-        // Tumbles back off the face and drops into the straw.
+        // Tumbles back off the face and drops onto the straw. The turn is a curve of the time since the clang (not a
+        // sum of frames), slowing as it goes and ending exactly on the angle it will lie at, so it does not snap flat.
         const k = s.t / 0.9;
-        f.obj.position.set(THREE.MathUtils.lerp(f.to.x, l.local.x, k), Math.max(l.local.y, f.to.y + s.t * 2.6 - 7 * s.t * s.t), THREE.MathUtils.lerp(TZ + 0.5, l.local.z, k) + Math.sin(k * Math.PI) * 1.5);
-        f.obj.rotation.x += dt * 14 * (1 - k);
+        const y = f.to.y + s.t * 2.6 - 7 * s.t * s.t;
+        if (y <= l.local.y && !f.down) { f.down = true; burst(150, 1.1, 0.2, 0.12); burst(2600, 1.5, 0.03, 0.07); }
+        f.obj.position.set(THREE.MathUtils.lerp(f.to.x, l.local.x, k), Math.max(l.local.y, y), THREE.MathUtils.lerp(f.to.z, l.local.z, k) + Math.sin(k * Math.PI) * 1.5);
+        f.obj.rotation.set(FLIPPED + (LYING - FLIPPED) * (2 * k - k * k), 0, l.tilt * k);
       }
       if (s.t > 1.45) {
-        s.axe++;
+        s.axe++; s.power = 0; // the next axe starts at the bottom of the swing, where the needle starts
         if (s.axe >= AXES) {
           s.phase = 'done'; s.t = 0;
           const won = s.score >= TO_WIN;
@@ -317,19 +361,25 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
       if (i === s.axe && s.phase === 'after' && s.fly?.bounce && s.t < 0.9) continue;
       place(a, l, c.elapsedTime);
     }
-    // The reticle: a ring of light on the target's plane; it pulses once locked.
+    // The reticle: a ring of light on the target's plane. It closes onto the mark as the aim begins and pulses while
+    // you hold; on the throw it stays where you let go and fades, so you can see what you threw at.
+    const aiming = s.phase === 'aim';
+    s.mark += ((aiming ? 1 : 0) - s.mark) * (1 - Math.exp(-rawDt * (aiming ? 14 : 8)));
+    markMat.opacity = 0.95 * s.mark;
     if (reticle.current) {
-      reticle.current.visible = s.phase === 'aim';
+      reticle.current.visible = s.mark > 0.02;
       reticle.current.position.copy(s.aim);
-      reticle.current.scale.setScalar(s.phase === 'aim' ? 1 + Math.sin(c.elapsedTime * 10) * 0.05 : 0.8);
+      reticle.current.scale.setScalar(aiming ? (1 + (1 - s.mark) * 1.3) * (1 + Math.sin(c.elapsedTime * 10) * 0.05) : 0.6 + 0.4 * s.mark);
     }
-    // The axe in your hand, drawn back over the shoulder with the needle.
+    // The axe in your hand, drawn back over the shoulder with the needle. Each new one is lifted into view from below
+    // (it is gone at once on the throw, because the thrown axe starts from exactly where this one was).
     const h = held.current;
     if (h) {
-      h.visible = s.phase === 'aim' || s.phase === 'power';
+      if (s.phase === 'aim' || s.phase === 'power') s.draw += (1 - s.draw) * (1 - Math.exp(-rawDt * 9)); else s.draw = 0;
+      h.visible = s.draw > 0.01;
       const w = s.power;
       const bob = Math.sin(c.elapsedTime * 2) * 0.02;
-      h.position.set(2.45, 3.75 + w * 0.35 + bob, LINE - 0.6 + w * 0.5);
+      h.position.set(2.45, 3.75 + w * 0.35 + bob - (1 - s.draw) * 1.5, LINE - 0.6 + w * 0.5);
       h.rotation.set(0.25 + w * 1.1, 0.25, -0.25);
     }
     // Chips.
@@ -351,10 +401,15 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     const bull = s.slow > 0;
     if (bull) camPos.set(ox + s.tx * 0.5 + 0.6, TY + 0.6, oz + TZ + 6.5);
     else camPos.set(ox + 1.6, 4.3 - s.push * 0.3, oz + LINE + 3.4 - s.push * 1.6);
-    const lookX = s.phase === 'aim' || s.phase === 'power' ? s.aim.x * 0.3 : s.fly ? s.fly.to.x * 0.5 : 0;
+    const lookX = s.phase === 'aim' ? s.aim.x * 0.3 : (s.phase === 'flight' || s.phase === 'after') && s.fly ? s.fly.to.x * 0.5 : 0;
     look.set(ox + (bull ? s.tx : lookX), TY + (bull ? 0 : 0.2), oz + TZ);
+    // The eye is eased as well as the camera: what it looks at changes with every phase (the mark, the throw, the
+    // boar on a ten), and set straight it would jerk the whole view at each change. It starts on the boar, where the
+    // hall's own camera was looking through the intro.
+    if (!s.placed) { s.placed = true; lookNow.set(ox, TY, oz + TZ); }
+    lookNow.lerp(look, 1 - Math.exp(-rawDt * 6));
     camera.position.lerp(camPos, 1 - Math.exp(-rawDt * (bull ? 5 : 4)));
-    camera.lookAt(look);
+    camera.lookAt(lookNow);
     const pc = camera as THREE.PerspectiveCamera;
     const fov = bull ? 30 : 34;
     if (Math.abs(pc.fov - fov) > 0.05) { pc.fov += (fov - pc.fov) * (1 - Math.exp(-rawDt * 5)); pc.updateProjectionMatrix(); }
@@ -371,11 +426,11 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
         ))}
       </group>
       {Array.from({ length: AXES }, (_, i) => <group key={i} ref={(g) => { axes.current[i] = g; if (g && !g.userData.init) { g.userData.init = true; g.visible = false; } }}><Axe /></group>)}
-      <group ref={(g) => { held.current = g; }}><Axe /></group>
-      <group ref={reticle}>
-        <mesh renderOrder={5}><ringGeometry args={[0.2, 0.27, 40]} /><meshBasicMaterial color="#ffe28a" transparent opacity={0.95} toneMapped={false} depthTest={false} /></mesh>
-        <mesh renderOrder={5}><circleGeometry args={[0.05, 16]} /><meshBasicMaterial color="#ffe28a" toneMapped={false} transparent depthTest={false} /></mesh>
-        {[0, 1, 2, 3].map((i) => <mesh key={i} renderOrder={5} rotation-z={(i * Math.PI) / 2} position={[Math.cos((i * Math.PI) / 2) * 0.42, Math.sin((i * Math.PI) / 2) * 0.42, 0]}><planeGeometry args={[0.18, 0.04]} /><meshBasicMaterial color="#ffe28a" toneMapped={false} transparent depthTest={false} /></mesh>)}
+      <group ref={(g) => { held.current = g; if (g && !g.userData.init) { g.userData.init = true; g.visible = false; } }}><Axe /></group>
+      <group ref={reticle} visible={false}>
+        <mesh renderOrder={5} material={markMat}><ringGeometry args={[0.2, 0.27, 40]} /></mesh>
+        <mesh renderOrder={5} material={markMat}><circleGeometry args={[0.05, 16]} /></mesh>
+        {[0, 1, 2, 3].map((i) => <mesh key={i} renderOrder={5} material={markMat} rotation-z={(i * Math.PI) / 2} position={[Math.cos((i * Math.PI) / 2) * 0.42, Math.sin((i * Math.PI) / 2) * 0.42, 0]}><planeGeometry args={[0.18, 0.04]} /></mesh>)}
       </group>
       <points ref={chips} geometry={chip.g} frustumCulled={false}><pointsMaterial color="#e0b880" size={0.1} sizeAttenuation /></points>
       <pointLight ref={flash} color="#ffd27a" intensity={0} distance={10} decay={1.6} />
@@ -393,7 +448,7 @@ function Hud() {
         <div className="big">{s.score}<small className="axe-of"> / {TO_WIN} to win</small></div>
         {s.line && <div className="line">{s.line}</div>}
         {s.phase === 'power' && <div className="hint"><kbd>Space</kbd> stop the needle in the gold</div>}
-        {s.phase === 'aim' && <div className="hint"><kbd>Space</kbd> throw</div>}
+        {s.phase === 'aim' && <div className="hint"><kbd>Space</kbd> {s.axe <= 2 ? 'throw when the mark is on the boar' : 'throw just before the boar reaches the mark'}</div>}
       </div>
       {s.last && <div key={s.hits.length} className={`axe-pop ${s.last === '+10' ? 'gold' : s.last === '0' || s.last === '+0' ? 'nil' : ''}`}>{s.last === '+0' ? '0' : s.last}</div>}
       {(s.phase === 'power' || s.phase === 'aim') && (
@@ -410,7 +465,7 @@ function Hud() {
 register({
   id: 'axes', name: 'Axe Throw',
   pitch: 'Five axes at the boar. First stop the swing needle in the gold (soft drops low, hard flies high, way off bounces), then throw when the drifting mark is on the boar. From the third axe the boar runs on its rail: lead it. 25 points wins.',
-  keys: [['Space', 'stop the swing, then throw'], ['Esc', 'leave']],
+  keys: [['Space', 'stop the swing, then throw (E or Enter do the same)'], ['Esc', 'leave']],
   entry: 400,
   Station, Play, Hud,
   view: () => ({ pos: [4.5, 5.2, LINE + 7], look: [0, TY, TZ] }),

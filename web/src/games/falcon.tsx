@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { audio, burst, flutter, noise, thud, voice } from '../realm/sound.ts';
 import { FireLight, Flames } from '../realm/fire.tsx';
 import type { Room } from '../realm/rooms.ts';
-import { keys, usePlay } from '../realm/play.ts';
+import { keys, TOUCH, usePlay } from '../realm/play.ts';
 import { gameKeys, gameUi, register, session, type Result } from './host.ts';
 import { DuskSky, Sea, Sparks, halo, useOutdoorAir } from './signals.tsx';
 import './falcon.css';
@@ -109,7 +109,7 @@ const GWING = flat([[0, 0.2], [0.8, 0.16], [1.5, 0.02], [1.6, -0.1], [0.9, -0.2]
 const GTIP = flat([[0, 0.1], [0.4, 0.02], [0.45, -0.06], [0, -0.12]]);
 interface Gull {
   g: THREE.Group; w: THREE.Group[]; mark: THREE.Sprite;
-  home: THREE.Vector3; r: number; ang: number; spin: number; pos: THREE.Vector3; vel: THREE.Vector3; flap: number; alive: boolean; wait: number; scared: number;
+  home: THREE.Vector3; r: number; ang: number; spin: number; pos: THREE.Vector3; vel: THREE.Vector3; flap: number; alive: boolean; wait: number; scared: number; grow: number;
 }
 function buildGull(): Gull {
   const g = new THREE.Group();
@@ -128,7 +128,7 @@ function buildGull(): Gull {
   // A faint glint above each gull so they read against the sea from far off.
   const mark = new THREE.Sprite(new THREE.SpriteMaterial({ map: halo(), color: '#fff6e0', transparent: true, opacity: 0.55, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
   mark.scale.setScalar(3.2);
-  return { g, w, mark, home: new THREE.Vector3(), r: 10, ang: 0, spin: 0.6, pos: new THREE.Vector3(), vel: new THREE.Vector3(), flap: Math.random() * 6, alive: true, wait: 0, scared: 0 };
+  return { g, w, mark, home: new THREE.Vector3(), r: 10, ang: 0, spin: 0.6, pos: new THREE.Vector3(), vel: new THREE.Vector3(), flap: Math.random() * 6, alive: true, wait: 0, scared: 0, grow: 0 };
 }
 function placeGull(gl: Gull, avoid?: THREE.Vector3) {
   for (let tries = 0; tries < 12; tries++) {
@@ -141,6 +141,7 @@ function placeGull(gl: Gull, avoid?: THREE.Vector3) {
   gl.r = 7 + Math.random() * 14; gl.ang = Math.random() * Math.PI * 2; gl.spin = (Math.random() < 0.5 ? -1 : 1) * (0.35 + Math.random() * 0.3);
   gl.pos.set(gl.home.x + Math.cos(gl.ang) * gl.r, gl.home.y, gl.home.z + Math.sin(gl.ang) * gl.r);
   gl.vel.set(0, 0, 0); gl.alive = true; gl.g.visible = true; gl.mark.visible = true; gl.scared = 0;
+  gl.grow = 0; gl.g.scale.setScalar(0.001); // a new gull swells in over a moment (see the flight loop); it used to blink into the sky
 }
 
 // ---- The terrain: one heightfield, coloured by slope and height (grass on top, banded rock, guano on the ledges).
@@ -185,6 +186,8 @@ function Coast() {
     }
     return { rocks, bushes };
   }, []);
+  // Handed to the meshes as props, so nothing frees them when the round ends: the cliff alone is 66,000 points a round.
+  useEffect(() => () => { geo.dispose(); stackGeo.dispose(); }, [geo, stackGeo]);
   const inst = (mats: THREE.Matrix4[]) => (r: THREE.InstancedMesh | null) => { if (r) { mats.forEach((mm, i) => r.setMatrixAt(i, mm)); r.instanceMatrix.needsUpdate = true; } };
   return (
     <group>
@@ -218,6 +221,7 @@ function Surf() {
     vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
     fragmentShader: 'uniform float time; varying vec2 vUv; void main(){ float w = 0.5 + 0.5 * sin(vUv.y * 3.0 + time * 1.3) * sin(vUv.y * 1.1 - time * 0.7); float a = smoothstep(0.0, 0.5, vUv.x) * smoothstep(1.0, 0.75, vUv.x) * (0.25 + 0.5 * w); gl_FragColor = vec4(vec3(1.0, 0.97, 0.92), a * 0.8); }',
   }), []);
+  useEffect(() => () => { geo.dispose(); mat.dispose(); }, [geo, mat]);
   useFrame(({ clock }) => { mat.uniforms.time.value = clock.elapsedTime; });
   return <mesh geometry={geo} material={mat} />;
 }
@@ -306,10 +310,20 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
   const st = useRef({
     t: 0, left: TIME, caught: 0, pos: LAUNCH.clone(), yaw: -Math.PI / 2, pitch: 0.05, roll: 0, v: 20, flap: 0, fold: 0, stun: 0, shake: 0, slow: 0,
     fov: 60, lastCatch: -10, placed: false, ended: false, flapCue: 0, punch: 0,
+    armed: false, diving: false, spin: 0, dip: 0, streak: 0, sec: TIME, prev: LAUNCH.clone(),
   });
   useMemo(() => { ui.reset(); }, []);
+  // The birds and the three clouds of points are built by hand and shown as they are, so they are freed by hand.
+  // The wing and tail outlines and every material are shared with the hawk on the perch: those stay.
+  useEffect(() => () => {
+    const shared = new Set<THREE.BufferGeometry>([INNER, OUTER, PRIMARY, TAILF, GWING, GTIP]);
+    const free = (o: THREE.Object3D) => o.traverse((c) => { const m = c as THREE.Mesh; if (m.isMesh && !shared.has(m.geometry)) m.geometry.dispose(); });
+    free(hawk.root);
+    for (const g of gulls) { free(g.g); g.mark.material.dispose(); }
+    for (const p of [feathers, spray, streaks]) { p.geo.dispose(); (p.points.material as THREE.Material).dispose(); }
+  }, [hawk, gulls, feathers, spray, streaks]);
   if (import.meta.env.DEV) Object.assign(window, { __fal: { st, gulls } });
-  const fwd = useMemo(() => new THREE.Vector3(), []), tmp = useMemo(() => new THREE.Vector3(), []), camPos = useMemo(() => new THREE.Vector3(), []), look = useMemo(() => new THREE.Vector3(), []);
+  const fwd = useMemo(() => new THREE.Vector3(), []), tmp = useMemo(() => new THREE.Vector3(), []), camPos = useMemo(() => new THREE.Vector3(), []), look = useMemo(() => new THREE.Vector3(), []), lookNow = useMemo(() => new THREE.Vector3(), []);
   const white = useMemo(() => new THREE.Color('#f6f2ea'), []), rust = useMemo(() => new THREE.Color('#9a4a2a'), []), foam = useMemo(() => new THREE.Color('#eef0ec'), []), streakC = useMemo(() => new THREE.Color('#b8a99a'), []);
   const proj = useMemo(() => new THREE.Vector3(), []);
 
@@ -321,9 +335,14 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     s.t += dt;
     const flying = s.t > 1.2 && !s.ended;
     if (flying) s.left = Math.max(0, s.left - dt);
-    // ---- Controls.
-    const L = keys.has('a') || keys.has('arrowleft'), R = keys.has('d') || keys.has('arrowright');
-    const dive = keys.has('w') || keys.has(' ') || keys.has('arrowup'), climb = keys.has('s') || keys.has('arrowdown');
+    // ---- Controls. She answers only once she is out through the arch (banked or stooped before that she went
+    // through the wall or into the floor), and the Space that started the round has to come up before it means stoop.
+    const space = keys.has(' ');
+    if (!space) s.armed = true;
+    const L = flying && (keys.has('a') || keys.has('arrowleft')), R = flying && (keys.has('d') || keys.has('arrowright'));
+    const dive = flying && (keys.has('w') || keys.has('arrowup') || (space && s.armed)), climb = flying && (keys.has('s') || keys.has('arrowdown'));
+    if (dive && !s.diving) burst(420, 0.7, 0.06, 0.3, 0, 'lowpass'); // the wings folding
+    s.diving = dive;
     const ctl = s.stun > 0 ? 0.25 : 1;
     s.stun = Math.max(0, s.stun - dt);
     const wantRoll = s.ended ? 0.25 : ((R ? 1 : 0) - (L ? 1 : 0)) * 0.95 * ctl;
@@ -348,7 +367,11 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     s.v += (-30 * Math.sin(s.pitch) - 0.6 * (s.v - 22) + (flapping ? 9 : 0)) * dt;
     s.v = THREE.MathUtils.clamp(s.v, 11, 64);
     fwd.set(Math.sin(s.yaw) * Math.cos(s.pitch), Math.sin(s.pitch), Math.cos(s.yaw) * Math.cos(s.pitch));
+    s.prev.copy(s.pos);
     s.pos.addScaledVector(fwd, s.v * dt);
+    // A knock turns her flight at once, but her body and the eye behind her come round after it over half a second:
+    // `spin` and `dip` are what is left of the old heading, and they drain away.
+    s.spin *= Math.exp(-dt * 6); s.dip *= Math.exp(-dt * 6);
     // ---- Wings.
     s.fold += ((dive ? Math.min(1, (s.v - 18) / 20) : 0) - s.fold) * (1 - Math.exp(-dt * 6));
     const amp = flapping ? 0.75 : s.fold > 0.3 ? 0.04 : 0.1;
@@ -356,25 +379,36 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     if (flapping && (s.flapCue -= dt) < 0) { s.flapCue = 0.52; flutter(3, 0.5); }
     pose(hawk, s.flap, amp, s.fold);
     hawk.root.position.copy(s.pos);
-    hawk.root.rotation.set(-s.pitch, s.yaw, s.roll, 'YXZ');
-    hawk.head.rotation.set(s.pitch * 0.5, 0, -s.roll * 0.4);
+    hawk.root.rotation.set(-(s.pitch + s.dip), s.yaw + s.spin, s.roll, 'YXZ');
+    hawk.head.rotation.set((s.pitch + s.dip) * 0.5, 0, -s.roll * 0.4);
     // ---- Hitting things.
     const ground = heightAt(s.pos.x, s.pos.z);
-    let hitStack = false;
-    for (const [x, z, r, top] of STACKS) if (Math.hypot(s.pos.x - x, s.pos.z - z) < r * 1.05 + 0.8 && s.pos.y < top + 1) hitStack = true;
+    let stack: (typeof STACKS)[number] | undefined;
+    for (const sk of STACKS) if (Math.hypot(s.pos.x - sk[0], s.pos.z - sk[1]) < sk[2] * 1.05 + 0.8 && s.pos.y < sk[3] + 1) stack = sk;
     if (s.pos.y < SEA_Y + 0.7) {
+      s.dip += s.pitch - 0.45;
       s.pos.y = SEA_Y + 0.8; s.pitch = 0.45; s.v *= 0.55; s.shake = 0.7; s.stun = 0.6;
-      spray.emit(s.pos.clone(), 80, foam, 16, 0.7, 1.1, 1.2); splash();
+      spray.emit(s.pos, 80, foam, 16, 0.7, 1.1, 1.2); splash();
       ui.set({ line: 'Into the sea! Pull up sooner.', flash: now });
-    } else if (s.pos.y < ground + 1 || hitStack) {
-      if (hitStack) { const sk = STACKS.find(([x, z, r]) => Math.hypot(s.pos.x - x, s.pos.z - z) < r * 1.05 + 0.8)!; tmp.set(s.pos.x - sk[0], 0, s.pos.z - sk[1]).setLength(sk[2] * 1.05 + 1.2); s.pos.set(sk[0] + tmp.x, s.pos.y, sk[1] + tmp.z); }
+    } else if (s.pos.y < ground + 1 || stack) {
+      // Which way is clear of the rock: out from the middle of a stack, or down the slope from a cliff face.
+      let cx = 0, cz = 0;
+      if (stack && s.pos.y > stack[3] - 1.5) s.pos.y = stack[3] + 1.6; // down onto a stack's crown: she bounces up off it (she used to be thrown out to its rim)
+      else if (stack) { tmp.set(s.pos.x - stack[0], 0, s.pos.z - stack[1]).setLength(stack[2] * 1.05 + 1.2); s.pos.set(stack[0] + tmp.x, s.pos.y, stack[1] + tmp.z); cx = tmp.x; cz = tmp.z; }
       else {
         const e = 1, nx = heightAt(s.pos.x - e, s.pos.z) - heightAt(s.pos.x + e, s.pos.z), nz = heightAt(s.pos.x, s.pos.z - e) - heightAt(s.pos.x, s.pos.z + e);
         if (Math.hypot(nx, nz) > 0.6) { s.pos.x += Math.sign(nx || -1) * 2.5; } // off a cliff face, out over the sea
         s.pos.y = Math.max(s.pos.y, heightAt(s.pos.x, s.pos.z) + 1.6);
+        cx = nx; cz = nz;
       }
-      s.yaw += Math.PI * 0.75 * (s.roll >= 0 ? 1 : -1); s.pitch = 0.35; s.v *= 0.5; s.stun = 0.8; s.shake = 1;
-      feathers.emit(s.pos.clone(), 30, rust, 7, 0.8, 0.45, 1.6); thud(1.2); burst(300, 0.8, 0.2, 0.3, 0, 'lowpass');
+      // She comes off the rock heading mostly the clear way: three quarters of the turn from her heading to it.
+      // (Turned by the side she happened to be banking, a glancing blow could throw her straight back at the face.)
+      // On flat ground there is no clear way to prefer, and she breaks off to the side as before.
+      let turn = Math.PI * 0.75 * (s.roll >= 0 ? 1 : -1);
+      if (Math.hypot(cx, cz) > 0.3) { const d = Math.atan2(cx, cz) - s.yaw; turn = Math.atan2(Math.sin(d), Math.cos(d)) * 0.75; }
+      s.spin -= turn; s.dip += s.pitch - 0.35;
+      s.yaw += turn; s.pitch = 0.35; s.v *= 0.5; s.stun = 0.8; s.shake = 1;
+      feathers.emit(s.pos, 30, rust, 7, 0.8, 0.45, 1.6); thud(1.2); burst(300, 0.8, 0.2, 0.3, 0, 'lowpass');
       ui.set({ line: 'Struck the rock! Feathers everywhere.', flash: now });
     }
     // ---- Gulls: wheel round their stations, scatter from the hawk, and get warier with every catch.
@@ -382,6 +416,7 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     let near: Gull | undefined, nd = Infinity;
     for (const g of gulls) {
       if (!g.alive) { if ((g.wait -= dt) <= 0) placeGull(g, s.pos); else continue; }
+      if (g.grow < 1) { g.grow = Math.min(1, g.grow + dt * 2.2); const k = g.grow - 1; g.g.scale.setScalar(1.25 * Math.max(0.001, 1 + 2.7 * k * k * k + 1.7 * k * k)); }
       g.ang += g.spin * dt * 0.9 / (g.r / 10);
       tmp.set(g.home.x + Math.cos(g.ang) * g.r, g.home.y + Math.sin(g.ang * 2 + g.r) * 2, g.home.z + Math.sin(g.ang) * g.r);
       tmp.sub(g.pos).multiplyScalar(1.6);
@@ -404,12 +439,16 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
       g.g.position.copy(g.pos);
       if (g.vel.lengthSq() > 0.1) g.g.rotation.set(-Math.atan2(g.vel.y, Math.hypot(g.vel.x, g.vel.z)) * 0.6, Math.atan2(g.vel.x, g.vel.z), -g.spin * 0.5, 'YXZ');
       g.mark.position.copy(g.g.position); g.mark.position.y += 1.6;
-      (g.mark.material as THREE.SpriteMaterial).opacity = THREE.MathUtils.clamp((d - 25) / 60, 0, 0.6);
-      // The strike.
-      if (flying && d < 2.6 + s.v * 0.05) {
+      (g.mark.material as THREE.SpriteMaterial).opacity = THREE.MathUtils.clamp((d - 25) / 60, 0, 0.6) * g.grow;
+      // The strike: anywhere along this frame's stretch of flight, not only where it ends, so a fast stoop on a
+      // slow screen takes the same gulls as on a quick one.
+      const sx = s.pos.x - s.prev.x, sy = s.pos.y - s.prev.y, sz = s.pos.z - s.prev.z, sl = sx * sx + sy * sy + sz * sz;
+      const u = sl > 1e-6 ? THREE.MathUtils.clamp(((g.pos.x - s.prev.x) * sx + (g.pos.y - s.prev.y) * sy + (g.pos.z - s.prev.z) * sz) / sl, 0, 1) : 1;
+      const reach = Math.hypot(s.prev.x + sx * u - g.pos.x, s.prev.y + sy * u - g.pos.y, s.prev.z + sz * u - g.pos.z);
+      if (flying && reach < 2.6 + s.v * 0.05) {
         g.alive = false; g.g.visible = false; g.mark.visible = false; g.wait = 5 + Math.random() * 3;
         s.caught++; s.slow = 0.22; s.punch = 1; s.shake = Math.max(s.shake, 0.4);
-        feathers.emit(g.pos.clone(), 70, white, 9, 0.9, 0.45, 2.2);
+        feathers.emit(g.pos, 70, white, 9, 0.9, 0.45, 2.2);
         kee(1); burst(900, 1.2, 0.3, 0.1); thud(0.6);
         const quick = s.t - s.lastCatch < 5; s.lastCatch = s.t;
         const left = WIN - s.caught;
@@ -420,31 +459,43 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
       if (d < nd) { nd = d; near = g; }
     }
     // ---- Feathers, spray, speed streaks.
-    if (s.v > 34 && flying) for (let k = 0; k < Math.floor((s.v - 30) * dt * 6) + (Math.random() < 0.5 ? 1 : 0); k++) {
-      proj.set((Math.random() - 0.5) * 16, (Math.random() - 0.5) * 10, 0);
-      const r = proj.x, u = proj.y;
+    // So many streaks a second for the speed, counted in time: counted per frame, a slow screen drew fewer.
+    if (s.v > 34 && flying) s.streak += (s.v - 30) * 6 * dt;
+    for (; s.streak >= 1; s.streak--) {
+      const r = (Math.random() - 0.5) * 16, u = (Math.random() - 0.5) * 10;
       tmp.set(s.pos.x + fwd.x * 26 + Math.cos(s.yaw) * r, s.pos.y + fwd.y * 26 + u, s.pos.z + fwd.z * 26 - Math.sin(s.yaw) * r);
-      streaks.emit(tmp.clone(), 1, streakC, 0.1, 0, 0.6, 0.7);
+      streaks.emit(tmp, 1, streakC, 0.1, 0, 0.6, 0.7);
     }
     feathers.update(dt); spray.update(dt); streaks.update(dt);
     // ---- Wind in your ears.
     const w = wind.current, a = audio();
     if (w && a) { w.g.gain.setTargetAtTime(Math.min(0.22, 0.015 + ((s.v - 15) / 50) ** 2 * 0.25), a.currentTime, 0.1); w.f.frequency.setTargetAtTime(250 + s.v * 14, a.currentTime, 0.1); }
     // ---- Chase camera: behind and above, lagging, widening with speed, leaning into the bank.
-    const back = 8 + s.fold * 2, up = 2.6 - s.pitch * 2;
-    camPos.set(room.x + s.pos.x - Math.sin(s.yaw) * back, s.pos.y + up, room.z + s.pos.z - Math.cos(s.yaw) * back);
-    if (!s.placed) { s.placed = true; camera.position.copy(camPos); }
-    else camera.position.lerp(camPos, 1 - Math.exp(-dt * (s.t < 1.5 ? 3 : 6)));
+    // It follows the heading she shows (so after a knock it swings round with her and is not thrown across the sky).
+    const vy = s.yaw + s.spin, vp = s.pitch + s.dip;
+    const back = 8 + s.fold * 2, up = 2.6 - vp * 2;
+    const pc = camera as THREE.PerspectiveCamera;
+    camPos.set(room.x + s.pos.x - Math.sin(vy) * back, s.pos.y + up, room.z + s.pos.z - Math.cos(vy) * back);
+    look.set(room.x + s.pos.x + Math.sin(vy) * Math.cos(vp) * 8, s.pos.y + Math.sin(vp) * 8 + 0.6, room.z + s.pos.z + Math.cos(vy) * Math.cos(vp) * 8);
+    if (!s.placed) {
+      // The round opens on the card's view of the perch, and the eye sweeps from there out through the arch after
+      // her (it used to cut to her tail). Only a camera left far off, by a round started again before it had come
+      // home, is put straight behind her. The lens starts from what the card left too.
+      s.placed = true; s.fov = pc.fov;
+      if (camera.position.distanceTo(camPos) > 40) { camera.position.copy(camPos); lookNow.copy(look); }
+      else camera.getWorldDirection(lookNow).multiplyScalar(12).add(camera.position);
+    }
+    camera.position.lerp(camPos, 1 - Math.exp(-dt * (3 + 3 * smooth(1, 2.2, s.t))));
     const cg = heightAt(camera.position.x - room.x, camera.position.z - room.z) + 1.2;
     if (camera.position.y < cg && camera.position.x - room.x < -27) camera.position.y = cg;
     if (camera.position.y < SEA_Y + 1) camera.position.y = SEA_Y + 1;
-    look.set(room.x + s.pos.x + fwd.x * 8, s.pos.y + fwd.y * 8 + 0.6, room.z + s.pos.z + fwd.z * 8);
-    camera.lookAt(look);
+    // The gaze is loose while she leaves the perch and close on her from then on.
+    lookNow.lerp(look, 1 - Math.exp(-dt * (4 + 56 * smooth(0, 1.4, s.t))));
+    camera.lookAt(lookNow);
     camera.rotateZ(-s.roll * 0.35);
     s.punch = Math.max(0, s.punch - dt * 3);
     const fov = THREE.MathUtils.clamp(56 + (s.v - 20) * 0.55, 54, 84) - s.punch * 8;
     s.fov += (fov - s.fov) * (1 - Math.exp(-dt * 4));
-    const pc = camera as THREE.PerspectiveCamera;
     if (Math.abs(pc.fov - s.fov) > 0.05) { pc.fov = s.fov; pc.updateProjectionMatrix(); }
     s.shake = Math.max(0, s.shake - dt * 1.6);
     if (s.shake > 0) { const k = s.shake * s.shake; camera.rotateX(Math.sin(now * 41) * k * 0.03); camera.rotateY(Math.sin(now * 33 + 2) * k * 0.03); }
@@ -469,7 +520,14 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     }
     // ---- The clock.
     if (Math.abs(s.left - ui.state.left) > 0.2 || Math.abs(s.v - ui.state.speed) > 1) ui.set({ left: s.left, speed: s.v });
-    if (s.t > 1.2 && ui.state.phase === 'launch') ui.set({ phase: 'fly', line: 'Find the gulls along the cliffs. Hold W to stoop.' });
+    if (s.t > 1.2 && ui.state.phase === 'launch') ui.set({ phase: 'fly', line: `Find the gulls along the cliffs. Hold ${TOUCH ? 'Stoop' : 'W'} to dive on them.` });
+    // The last of the light: a word at fifteen seconds, then a tick for each of the last ten.
+    const sec = Math.ceil(s.left);
+    if (sec !== s.sec && flying) {
+      s.sec = sec;
+      if (sec === 15) ui.set({ line: s.caught < WIN ? `The sun is low. ${WIN - s.caught} more to win.` : 'The sun is low.' });
+      if (sec <= 10 && sec > 0) burst(sec <= 3 ? 1500 : 1100, 9, 0.05, 0.05);
+    }
     if (s.left <= 0 && !s.ended) {
       s.ended = true;
       const won = s.caught >= WIN;
@@ -510,7 +568,7 @@ function Hud() {
         <div className="pips">{Array.from({ length: Math.max(WIN, s.caught) }, (_, i) => <i key={i} className={i < s.caught ? 'on' : ''} />)}</div>
         <div className="line">{s.line}</div>
         <div className="fal-speed"><span style={{ transform: `scaleX(${Math.min(1, (s.speed - 10) / 54)})` }} /></div>
-        <div className="hint"><kbd>A</kbd><kbd>D</kbd> bank · <kbd>W</kbd>/<kbd>Space</kbd> stoop · <kbd>S</kbd> climb</div>
+        <div className="hint"><kbd>A</kbd><kbd>D</kbd> or <kbd>←</kbd><kbd>→</kbd> bank · hold <kbd>W</kbd>, <kbd>↑</kbd> or <kbd>Space</kbd> to stoop · <kbd>S</kbd> or <kbd>↓</kbd> climb</div>
       </div>
     </>
   );
@@ -518,8 +576,8 @@ function Hud() {
 
 register({
   id: 'falcon', name: 'Falconry',
-  pitch: 'Cast the house hawk off the aerie and hunt the gulls along the sea cliffs. Fold your wings to stoop and you’ll outrun anything — but pull up before the water. Eight gulls before sundown.',
-  keys: [['A D', 'bank left and right'], ['W / Space (hold)', 'stoop: dive for speed'], ['S', 'climb'], ['Esc', 'leave']],
+  pitch: 'Cast the house hawk off the aerie and hunt the gulls along the sea cliffs. Fold your wings to stoop and you’ll outrun anything, but pull up before the water. Eight gulls before sundown.',
+  keys: [['A D / ← →', 'bank left and right'], ['W / ↑ / Space (hold)', 'stoop: dive for speed'], ['S / ↓', 'climb'], ['Esc', 'leave']],
   entry: 400,
   Station, Play, Hud,
   view: () => ({ pos: [STATION[0] + 6, 6.5, STATION[1] + 8], look: [STATION[0] - 1, 3.5, STATION[1]] }),

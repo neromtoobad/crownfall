@@ -7,7 +7,7 @@ import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { walkY } from './bridges.ts';
-import { dry, leafy, moveBody, nearestFree, peopleNear, setBeasts, solid } from './collide.ts';
+import { crowd, driven, free, leafy, moveBody, nearestFree, setBeasts, solid } from './collide.ts';
 import { HOUSES } from './layout.ts';
 import { HORSE_SCALE, WHEEL_X, chariotMats, horseDepth, horseMaterial, rigHorse, runnerWorld, useChariotGeo } from './Race.tsx';
 import { M, live, setWatch } from './race.ts';
@@ -41,8 +41,11 @@ function side(p: { position: { x: number; z: number }; rotation?: { y: number } 
 /** [distance ahead of the car, radius] for each round body of a chariot and its team. */
 const CAR_BODY: [number, number][] = [[0, 2.3], [4, 2.1], [8, 1.7]];
 const carBeasts: { x: number; z: number; r: number }[] = [];
+/** The same three bodies while you drive, for people on foot to keep clear of. */
+const drivenPool = CAR_BODY.map(([, r]) => ({ x: 0, z: 0, r }));
 
 const WALK = 5.5, RUN = 13, CAR_MAX = 30;
+const horseDummy = new THREE.Object3D();
 const LIMBS = ['LeftUpLeg', 'LeftLeg', 'RightUpLeg', 'RightLeg', 'LeftArm', 'RightArm', 'LeftForeArm', 'RightForeArm', 'LeftFoot', 'RightFoot'];
 
 export function PlayerWorld() {
@@ -149,6 +152,8 @@ function Player({ seat }: { seat: Seat }) {
   const goalCam = useMemo(() => new THREE.Vector3(), []);
   const promptTick = useRef(0);
   const lean = useMemo(() => ({ roll: 0, pitch: 0, lastSpeed: 0 }), []);
+  // Eased so nothing snaps: how wide the limbs swing, the ground under your feet, and the ground the camera stands on.
+  const anim = useMemo(() => ({ amp: 0, y: NaN, camY: NaN }), []);
   const camDist = useRef(me.camDist);
   const shake = useRef(0);
   const rw = useMemo(() => ({ x: 0, y: 0, z: 0, yaw: 0 }), []);
@@ -168,7 +173,7 @@ function Player({ seat }: { seat: Seat }) {
     [me.x, me.z] = nearestFree(c.x + hz * 4.5, c.z - hx * 4.5, 1.2);
     me.camYaw = me.yaw + Math.PI - 0.5;
     camera.position.set(me.x, walkY(me.x, me.z) + 8, me.z + 14);
-    return () => { play.driving = false; };
+    return () => { play.driving = false; driven.length = 0; };
   }, [camera]);
 
   useFrame(({ clock }, rawDt) => {
@@ -195,8 +200,10 @@ function Player({ seat }: { seat: Seat }) {
         if (play.driving) {
           play.driving = false;
           const sx = Math.cos(c.yaw) * 4.2, sz = -Math.sin(c.yaw) * 4.2;
-          const r = moveBody(c.x, c.z, sx, sz, 0.9);
-          me.x = r.x; me.z = r.z; me.yaw = c.yaw;
+          // Step down onto clear ground: not into a wall, and not onto anyone standing by.
+          const r = moveBody(c.x, c.z, sx, sz, 0.9, true);
+          [me.x, me.z] = nearestFree(r.x, r.z, 0.9, true);
+          me.yaw = c.yaw; me.speed = 0;
           emitPlay();
         } else if (nearCar()) {
           play.driving = true; c.v = 0; emitPlay();
@@ -204,9 +211,10 @@ function Player({ seat }: { seat: Seat }) {
       }
       if (k === 'c' && !play.driving && play.inside < 0) {
         // Whistle for your chariot: it pulls up behind you.
-        const bx = me.x - Math.sin(me.yaw) * 9, bz = me.z - Math.cos(me.yaw) * 9;
-        const r = moveBody(bx, bz, 0, 0, 3.5, false, 'car');
-        if (dry(r.x, r.z)) { c.x = r.x; c.z = r.z; c.yaw = me.yaw; c.v = 0; }
+        // Far enough back that the horses' heads stop short of you, and never on top of anyone.
+        const bx = me.x - Math.sin(me.yaw) * 11.5, bz = me.z - Math.cos(me.yaw) * 11.5;
+        const [wx, wz] = nearestFree(bx, bz, 3.5, true, 'car');
+        if (free(wx, wz, 3.5, true, 'car')) { c.x = wx; c.z = wz; c.yaw = me.yaw; c.v = 0; }
       }
       if (k === ' ' && play.driving && c.cool <= 0) { c.boost = 1.6; c.cool = 3.2; shake.current = 0.5; crackWhip(); }
     }
@@ -233,8 +241,9 @@ function Player({ seat }: { seat: Seat }) {
       let fx = mx, fz = mz, hitAny = false;
       for (const [off, rad] of CAR_BODY) {
         const px = c.x + hx * off, pz = c.z + hz * off;
-        const r = moveBody(px, pz, fx, fz, rad, false, 'car');
-        if (r.hit) { hitAny = true; fx = r.x - px; fz = r.z - pz; }
+        // People are as solid as walls to it: they leap aside (below), and whoever can't brings the team up short.
+        const r = moveBody(px, pz, fx, fz, rad, true, 'car');
+        if (r.hit || r.who) { hitAny = true; fx = r.x - px; fz = r.z - pz; }
       }
       // Scraping along a wall keeps the speed you actually make along it; driving into one stops you.
       if (hitAny && dt > 0) {
@@ -244,9 +253,19 @@ function Player({ seat }: { seat: Seat }) {
       }
       c.x += fx; c.z += fz;
       // People leap out of the way of a chariot coming at them.
-      if (Math.abs(c.v) > 3) for (const [off, rad] of CAR_BODY) for (const p of peopleNear(c.x + hx * (off + 2), c.z + hz * (off + 2), rad + 2.5)) {
-        if (now - (p.userData.bump ?? -9) > 2) speakAs('dodged', p);
-        p.userData.bump = now; p.userData.dodge = side(p, c.x, c.z, c.yaw) * 5.5;
+      driven.length = 0;
+      CAR_BODY.forEach(([off], i) => { const b = drivenPool[i]; b.x = c.x + hx * off; b.z = c.z + hz * off; driven.push(b); });
+      // People leap out of the way of a chariot coming at them: everyone in its path, further ahead the faster it comes.
+      if (Math.abs(c.v) > 0.5) {
+        const fwd = c.v >= 0 ? 1 : -1, reach = 11 + Math.abs(c.v) * 0.9;
+        for (const p of crowd) {
+          const dx = p.position.x - c.x, dz = p.position.z - c.z;
+          if (Math.abs(dx) > 48 || Math.abs(dz) > 48) continue;
+          const along = (dx * hx + dz * hz) * fwd, across = Math.abs(dx * hz - dz * hx);
+          if (along < (fwd > 0 ? -2.5 : -11) || along > (fwd > 0 ? reach : reach - 8) || across > 3.9) continue;
+          if (now - (p.userData.bump ?? -9) > 2) speakAs('dodged', p);
+          p.userData.bump = now; p.userData.dodge = side(p as Parameters<typeof side>[0], c.x, c.z, c.yaw) * 5.5;
+        }
       }
       me.x = c.x; me.z = c.z; me.yaw = c.yaw; me.speed = Math.abs(c.v);
     } else {
@@ -277,10 +296,16 @@ function Player({ seat }: { seat: Seat }) {
       const acc = dt > 0 ? (me.speed - lean.lastSpeed) / dt : 0;
       lean.pitch += (THREE.MathUtils.clamp(acc * 0.004, -0.09, 0.1) - lean.pitch) * ease;
       lean.lastSpeed = me.speed;
-      if (me.speed > 0.05) {
-        const r = moveBody(me.x, me.z, Math.sin(me.yaw) * me.speed * dt, Math.cos(me.yaw) * me.speed * dt, 0.9, true);
+      driven.length = 0;
+      {
+        // Every frame, even standing still: anyone or anything that has ended up against you pushes you clear.
+        const go = me.speed * dt;
+        const r = moveBody(me.x, me.z, Math.sin(me.yaw) * go, Math.cos(me.yaw) * go, 0.9, true);
+        const got = Math.hypot(r.x - me.x, r.z - me.z);
         me.x = r.x; me.z = r.z;
-        if (r.who) { if (now - (r.who.userData.bump ?? -9) > 2) speakAs('bumped', r.who); r.who.userData.bump = now; if (me.speed > 9) r.who.userData.dodge = side(r.who, me.x, me.z, me.yaw) * 2.5; }
+        if (r.who && me.speed > 0.05) { if (now - (r.who.userData.bump ?? -9) > 2) speakAs('bumped', r.who); r.who.userData.bump = now; if (me.speed > 9) r.who.userData.dodge = side(r.who, me.x, me.z, me.yaw) * 2.5; }
+        // Up against a wall or a person you only make the ground you really cover: no running on the spot.
+        if ((r.hit || r.who) && go > 1e-4 && dt > 0) me.speed = Math.min(me.speed, Math.max(1.2, got / dt));
       }
       // An empty chariot rolls to a stop.
       c.v *= Math.max(0, 1 - dt * 3);
@@ -297,8 +322,11 @@ function Player({ seat }: { seat: Seat }) {
     // A footstep at each half of the walk cycle.
     const half = body.action.getClip().duration / 2;
     if (sp > 0.5 && Math.floor(body.action.time / half) !== Math.floor(bt0 / half)) step(surfaceAt(me.x, me.z), sp > WALK ? 1.5 : 1);
-    const amp = play.driving ? 0 : sp < 0.3 ? 0 : sp <= WALK ? Math.min(1, sp / 2.5) : 1 + ((sp - WALK) / (RUN - WALK)) * 0.75;
-    pose(body, amp, sp > WALK ? 0.22 * Math.min(1, (sp - WALK) / 4) : 0, sp < 0.3 && !play.driving ? Math.sin(now * 1.6) * 0.012 : 0);
+    const ampWant = play.driving ? 0 : sp < 0.3 ? 0 : sp <= WALK ? Math.min(1, sp / 2.5) : 1 + ((sp - WALK) / (RUN - WALK)) * 0.75;
+    // The limbs settle into the stand and swing out into the run over a few frames, never in one.
+    anim.amp = play.driving ? 0 : anim.amp + (ampWant - anim.amp) * (1 - Math.exp(-dt * (ampWant < anim.amp ? 11 : 16)));
+    const amp = anim.amp < 0.004 ? 0 : anim.amp;
+    pose(body, amp, sp > WALK ? 0.22 * Math.min(1, (sp - WALK) / 4) : 0, play.driving ? 0 : Math.sin(now * 1.6) * 0.012 * Math.max(0, 1 - amp * 3));
     if (racingNow) {
       // In the race: you stand in your house's chariot, wherever the sim has it this frame.
       if (body.obj.parent !== g) g.add(body.obj);
@@ -311,7 +339,10 @@ function Player({ seat }: { seat: Seat }) {
       g.position.set(c.x, walkY(c.x, c.z) + 1.6, c.z); // the nameplate rides along
     } else {
       if (body.obj.parent !== g) g.add(body.obj);
-      g.position.set(me.x, walkY(me.x, me.z), me.z);
+      // Your feet follow the ground a touch softly, so a kerb or the lip of a bridge is a step and not a jolt.
+      const gy = walkY(me.x, me.z);
+      anim.y = me.cut || !(Math.abs(gy - anim.y) < 2.5) ? gy : anim.y + (gy - anim.y) * (1 - Math.exp(-dt * 22));
+      g.position.set(me.x, anim.y, me.z);
       body.obj.rotation.order = 'YXZ';
       body.obj.rotation.set(lean.pitch, me.yaw, lean.roll);
     }
@@ -336,7 +367,7 @@ function Player({ seat }: { seat: Seat }) {
     if (cs > 1 && Math.floor(c.gait * 4) !== Math.floor(g0 * 4)) hoof(play.driving ? 1 : 0.5);
     const strideAmt = THREE.MathUtils.clamp(cs / 20, 0, 1);
     const bob = Math.abs(Math.sin(c.gait * Math.PI * 2)) * 0.18 * M * strideAmt;
-    const o = new THREE.Object3D();
+    const o = horseDummy;
     for (const j of [0, 1]) {
       o.position.set((j ? 0.5 : -0.5) * M, 0.836 * HORSE_SCALE + bob, 4.1 * M);
       o.rotation.set(Math.sin(c.gait * Math.PI * 2) * 0.04 * strideAmt, 0, 0);
@@ -406,7 +437,10 @@ function Player({ seat }: { seat: Seat }) {
     const mid = driving ? 3.2 * rig.drive : 0;
     rig.drive += ((driving ? 1 : 0) - rig.drive) * ease;
     const px = me.x + rx * R.side + rig.lead.x + Math.sin(me.yaw) * mid, pz = me.z + rz * R.side + rig.lead.z + Math.cos(me.yaw) * mid;
-    const py = walkY(me.x, me.z) + R.height;
+    // The camera rides the ground more softly still: bumps in the road don't shake the view.
+    const cy = walkY(me.x, me.z);
+    anim.camY = me.cut || !(Math.abs(cy - anim.camY) < 6) ? cy : anim.camY + (cy - anim.camY) * (1 - Math.exp(-dt * 9));
+    const py = anim.camY + R.height;
     // Collision: march out from the pivot; snap in at once, ease back out over about a second.
     const ox = Math.sin(me.camYaw) * Math.cos(me.camPitch), oz = Math.cos(me.camYaw) * Math.cos(me.camPitch), oy = Math.sin(me.camPitch);
     let dist = R.distWant;

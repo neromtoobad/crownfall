@@ -1,10 +1,10 @@
 // House Thorne's game, in the reed hall at Mirefort: the Asp's Basket. A wicker basket brim-full of gold with the
-// house asp coiled on its rim. Hold Space (or E) to reach in and draw coins out, one by one, into your hand; let go
+// house asp coiled on its rim. Hold Space (or E, or Enter) to reach in and draw coins out, one by one, into your hand; let go
 // to bank the handful on the table. The asp sways, and before it strikes it tells: it draws its head back and up,
 // its tongue flickers, its eyes go red and it hisses. Be out of the basket when it lunges. A bite costs the handful
 // and one of three lives. Its tells shorten as the sand runs, and from the second quarter it starts to feint.
 // Bank thirty coins in sixty seconds to win.
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { burst, voice } from '../realm/sound.ts';
@@ -198,17 +198,18 @@ function Asp({ mats, drive }: { mats: Mats; drive: ((t: number, dt: number, p: P
   const pose = useMemo<Pose>(() => ({ head: new THREE.Vector3(0, RIM + 0.75, -0.25), look: new THREE.Vector3(0, RIM + 0.6, 2), glow: 0, tongue: 0, jaw: 0 }), []);
   const curve = useMemo(() => new THREE.CatmullRomCurve3([new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()]), []);
   const built = useRef(false);
+  const dir = useMemo(() => new THREE.Vector3(), []), back = useMemo(() => new THREE.Vector3(), []);
   useFrame(({ clock }, dt) => {
     const t = clock.elapsedTime;
-    if (drive) drive(t, dt, pose);
+    if (drive) drive(t, Math.min(dt, 0.05), pose);
     else {
       pose.head.set(Math.sin(t * 0.9) * 0.22, RIM + 0.72 + Math.sin(t * 1.3) * 0.04, -0.3);
       pose.look.set(Math.sin(t * 0.9 - 0.6) * 0.6, RIM + 0.5, 2);
       pose.glow = 0; pose.tongue = Math.max(0, Math.sin(t * 2.1) * 3 - 2.4); pose.jaw = 0;
     }
     // Neck: from the coil's end, out and up in an S, to just behind the head.
-    const dir = new THREE.Vector3().subVectors(pose.look, pose.head).normalize();
-    const back = pose.head.clone().addScaledVector(dir, -0.22);
+    dir.subVectors(pose.look, pose.head).normalize();
+    back.copy(pose.head).addScaledVector(dir, -0.22);
     const p = curve.points;
     p[0].copy(NECK_BASE);
     p[1].set(NECK_BASE.x * 0.75 + back.x * 0.25, NECK_BASE.y + 0.12, NECK_BASE.z * 0.6 + back.z * 0.4 - 0.12);
@@ -219,7 +220,7 @@ function Asp({ mats, drive }: { mats: Mats; drive: ((t: number, dt: number, p: P
     else taperTube(curve, 28, 10, (u) => 0.088 - 0.03 * u, neck.current!.geometry, 4);
     const h = head.current!;
     h.position.copy(pose.head);
-    h.lookAt(pose.look);
+    faceLocal(h, pose.look);
     mats.eye.emissiveIntensity = pose.glow * 3.2;
     tongue.current!.scale.set(1, 1, Math.max(0.001, pose.tongue));
     tongue.current!.rotation.x = Math.sin(t * 40) * 0.25 * pose.tongue;
@@ -246,6 +247,17 @@ function Asp({ mats, drive }: { mats: Mats; drive: ((t: number, dt: number, p: P
 const ui = gameUi({ left: TIME, banked: 0, hand: 0, lives: LIVES, line: 'Reach in when it looks away.', flash: 0, danger: 0, bonus: '' });
 type Mood = 'sway' | 'tell' | 'strike' | 'recoil' | 'settle';
 
+// Scratch, so the frame loop allocates nothing.
+const vA = new THREE.Vector3(), vElbow = new THREE.Vector3(), vLimb = new THREE.Vector3(), vWorld = new THREE.Vector3();
+const stamp = new THREE.Object3D();
+/** Turn `o` to face a point given in its parent's frame. Object3D.lookAt wants a world-space target, and the hall sits
+ *  thousands of units from the world origin: handed a hall-local point it turns everything to face one fixed way. */
+function faceLocal(o: THREE.Object3D, target: THREE.Vector3) {
+  const p = o.parent!;
+  p.updateWorldMatrix(true, false);
+  o.lookAt(p.localToWorld(vWorld.copy(target)));
+}
+
 function clink(pitch = 1, when = 0, loud = 1) { burst(3300 * pitch + Math.random() * 400, 16, 0.045 * loud, 0.32, when); burst(5100 * pitch, 22, 0.02 * loud, 0.22, when + 0.008); }
 function hiss(dur: number) {
   burst(6200, 0.6, 0.035, dur, 0, 'highpass');
@@ -259,7 +271,11 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
   const mats = useMats();
   const st = useRef({
     t: 0, left: TIME, banked: 0, hand: 0, lives: LIVES, reach: 0, held: false, stun: 0, coinT: 0,
-    mood: 'sway' as Mood, moodT: 0, moodLen: 3.0, feint: false, shake: 0, over: false, overT: 0, struck: false, bitT: -9, needRelease: false,
+    mood: 'sway' as Mood, moodT: 0, moodLen: 3.0, feint: false, shake: 0, over: false, overT: 0, struck: false, bitT: -9,
+    // A key still held from the start card must be let go before it counts, or the hand dives in on frame one.
+    needRelease: true, told: false,
+    sw: 0, lunge: false, kick: 0, pop: 0, grip: 0, cam: false,
+    pileFrom: 0, pileTo: 0, bankT: 0, pileLive: true,
   });
   const fill = useRef(1);
   useMemo(() => { ui.reset(); }, []);
@@ -268,7 +284,8 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
   const fly = useRef(Array.from({ length: 10 }, () => ({ on: false, t: 0, from: new THREE.Vector3(), to: new THREE.Vector3(), spin: 0 })));
   const pile = useRef<THREE.InstancedMesh>(null);
   const bitFlash = useRef<THREE.PointLight>(null);
-  const camPos = useMemo(() => new THREE.Vector3(), []), camLook = useMemo(() => new THREE.Vector3(), []);
+  const camPos = useMemo(() => new THREE.Vector3(), []), camLook = useMemo(() => new THREE.Vector3(), []), lookNow = useMemo(() => new THREE.Vector3(), []);
+  const lungeFrom = useMemo(() => new THREE.Vector3(), []), lungeAim = useMemo(() => new THREE.Vector3(), []);
   const handPos = useMemo(() => new THREE.Vector3(), []);
   const REST = useMemo(() => new THREE.Vector3(0.55, RIM + 0.28, 1.15), []);
   const DEEP = useMemo(() => new THREE.Vector3(0.05, TOP + BH * 0.68, 0.12), []);
@@ -283,33 +300,40 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
 
   const drive = (time: number, dt: number, p: Pose) => {
     const s = st.current;
-    const sway = Math.sin(time * (1.1 + s.t / 40)) * 0.24;
+    // The sway quickens as the sand runs. Its phase is summed, not clock × rate: a rate that grows, multiplied by
+    // the whole session's clock, made the asp shiver faster the longer the game had been open.
+    s.sw += dt * (1.1 + s.t / 40);
+    const sway = Math.sin(s.sw) * 0.24;
     const target = s.reach > 0.3 ? handPos : REST;
     if (s.mood === 'sway') {
-      p.head.lerp(new THREE.Vector3(sway, RIM + 0.68 + Math.sin(time * 1.7) * 0.04, -0.32), 1 - Math.exp(-dt * 5));
-      p.look.lerp(new THREE.Vector3(sway * 1.6 + (s.reach > 0.3 ? handPos.x * 0.5 : 0), RIM + 0.45, 1.8), 1 - Math.exp(-dt * 4));
-      p.glow += (0 - p.glow) * Math.min(1, dt * 4);
+      p.head.lerp(vA.set(sway, RIM + 0.68 + Math.sin(time * 1.7) * 0.04, -0.32), 1 - Math.exp(-dt * 5));
+      p.look.lerp(vA.set(sway * 1.6 + (s.reach > 0.3 ? handPos.x * 0.5 : 0), RIM + 0.45, 1.8), 1 - Math.exp(-dt * 4));
+      p.glow += (0 - p.glow) * (1 - Math.exp(-dt * 4));
       p.tongue = Math.max(0, Math.sin(time * 2.3) * 3 - 2.3);
-      p.jaw += (0 - p.jaw) * Math.min(1, dt * 8);
+      p.jaw += (0 - p.jaw) * (1 - Math.exp(-dt * 8));
     } else if (s.mood === 'tell') {
       const u = Math.min(1, s.moodT / s.moodLen);
       // Draw back and up into an S, eyes on your hand, tongue going like a flag, eyes reddening.
-      p.head.lerp(new THREE.Vector3(sway * 0.3, RIM + 0.95 + u * 0.15, -0.62 - u * 0.12), 1 - Math.exp(-dt * 9));
+      p.head.lerp(vA.set(sway * 0.3, RIM + 0.95 + u * 0.15, -0.62 - u * 0.12), 1 - Math.exp(-dt * 9));
       p.look.lerp(target, 1 - Math.exp(-dt * 10));
       p.glow = Math.min(1, u * 1.4);
       p.tongue = 0.6 + 0.4 * Math.abs(Math.sin(time * 26));
       p.jaw = u * 0.3;
     } else if (s.mood === 'strike') {
+      // The lunge runs on the clock, not per frame: from where the head was to your hand in a tenth of a second,
+      // following the hand while it flies, then held where it landed.
       const u = Math.min(1, s.moodT / 0.1);
-      const aim = s.feint ? new THREE.Vector3(0, RIM + 0.75, -0.2) : target.clone().add(new THREE.Vector3(0, 0.06, -0.12));
-      p.head.lerp(aim, u * 0.85 + 0.1);
-      p.look.copy(aim).add(new THREE.Vector3(0, -0.2, 1.2));
+      if (!s.lunge || u < 1) { if (s.feint) lungeAim.set(0, RIM + 0.75, -0.2); else { lungeAim.copy(target); lungeAim.y += 0.06; lungeAim.z -= 0.12; } }
+      if (!s.lunge) { s.lunge = true; lungeFrom.copy(p.head); }
+      p.head.lerpVectors(lungeFrom, lungeAim, 1 - (1 - u) * (1 - u));
+      vA.copy(lungeAim); vA.y -= 0.2; vA.z += 1.2;
+      p.look.lerp(vA, 1 - Math.exp(-dt * 45)); // the head whips round to face along the lunge, in a frame or three
       p.jaw = 1; p.glow = 1; p.tongue = 0;
     } else if (s.mood === 'recoil' || s.mood === 'settle') {
-      p.head.lerp(new THREE.Vector3(sway, RIM + 0.7, -0.32), 1 - Math.exp(-dt * 4));
-      p.look.lerp(new THREE.Vector3(sway, RIM + 0.45, 1.8), 1 - Math.exp(-dt * 3));
-      p.glow += (0 - p.glow) * Math.min(1, dt * 3);
-      p.jaw += (0 - p.jaw) * Math.min(1, dt * 6);
+      p.head.lerp(vA.set(sway, RIM + 0.7, -0.32), 1 - Math.exp(-dt * 4));
+      p.look.lerp(vA.set(sway, RIM + 0.45, 1.8), 1 - Math.exp(-dt * 3));
+      p.glow += (0 - p.glow) * (1 - Math.exp(-dt * 3));
+      p.jaw += (0 - p.jaw) * (1 - Math.exp(-dt * 6));
       p.tongue = s.mood === 'settle' ? Math.max(0, Math.sin(time * 9) * 2 - 1) : 0;
     }
   };
@@ -337,8 +361,10 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
       if (Math.ceil(s.left) !== Math.ceil(ui.state.left)) ui.set({ left: s.left });
     }
     s.stun = Math.max(0, s.stun - dt);
-    const down = keys.has(' ') || keys.has('e');
-    if (!down) s.needRelease = false;
+    const down = keys.has(' ') || keys.has('e') || keys.has('enter');
+    if (!down) { s.needRelease = false; s.told = false; }
+    // Holding on through a bite (or through the start card) does nothing until you let go: say so, once.
+    else if (s.needRelease && s.stun <= 0 && !s.over && !s.told) { s.told = true; ui.set({ line: 'Let go, then hold again to reach in.' }); }
     const want = !s.over && s.stun <= 0 && !s.needRelease && down;
     if (want && !s.held) rustle();
     if (!want && s.held) bank(s);
@@ -355,7 +381,7 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
       s.coinT += dt;
       const every = Math.max(0.3, 0.55 - s.hand * 0.025);
       if (s.coinT > every) {
-        s.coinT = 0; s.hand++;
+        s.coinT -= every; s.hand++; // keep the remainder, so the take does not depend on the frame rate
         clink(1 + s.hand * 0.04);
         fill.current = Math.max(0, fill.current - 0.006);
         const f = fly.current.find((x) => !x.on);
@@ -371,9 +397,10 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
         // Feints come in after the first quarter, more often toward the end.
         s.feint = s.t > TIME * 0.25 && Math.random() < 0.18 + 0.22 * (s.t / TIME);
         hiss(s.moodLen + 0.1);
+        if (s.reach > 0.3) ui.set({ line: 'It is rearing. Pull your hand out.' });
       } else if (s.mood === 'tell' && s.moodT > s.moodLen) {
         if (s.feint && Math.random() < 0.6) { s.mood = 'settle'; s.moodT = 0; ui.set({ line: 'A feint. It’s toying with you.' }); }
-        else { s.mood = 'strike'; s.moodT = 0; s.struck = false; burst(900, 0.6, 0.12, 0.16); }
+        else { s.mood = 'strike'; s.moodT = 0; s.struck = false; s.lunge = false; burst(900, 0.6, 0.12, 0.16); }
       } else if (s.mood === 'strike' && !s.struck && s.moodT > 0.08) {
         s.struck = true;
         if (s.reach > 0.35 && !s.feint) {
@@ -388,7 +415,14 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
         }
       } else if (s.mood === 'strike' && s.moodT > 0.42) { s.mood = 'recoil'; s.moodT = 0; }
       else if ((s.mood === 'recoil' || s.mood === 'settle') && s.moodT > (s.mood === 'recoil' ? 0.7 : 0.4)) pickMood(s);
-      if (s.left <= 0) { if (s.hand > 0) bank(s); s.over = true; ui.set({ line: 'The sand is out.' }); }
+      // (Not when the third bite landed on this same frame: its line stands.)
+      if (s.left <= 0 && !s.over) { if (s.hand > 0) bank(s); s.over = true; ui.set({ line: 'The sand is out.' }); }
+    }
+    // Once the round is over the asp stands down: no new tell, and a strike already in flight still draws back.
+    // (It used to freeze as it was, reared and red, for the last second and a half.)
+    if (s.over) {
+      if (s.mood === 'sway' || s.mood === 'tell') { s.mood = 'settle'; s.moodT = 0; }
+      else if (s.mood === 'strike' && s.moodT > 0.42) { s.mood = 'recoil'; s.moodT = 0; }
     }
     if (s.over && s.overT > 1.6) {
       const won = s.banked >= TARGET;
@@ -401,48 +435,65 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     // ---- The arm: an upper arm from the shoulder to the elbow, a forearm to the hand; the hand closes as it fills.
     const a = arm.current!, hnd = hand.current!;
     const jolt = s.stun > 0 ? Math.sin(s.stun * 30) * 0.05 * s.stun : 0;
-    hnd.position.copy(handPos).add(new THREE.Vector3(jolt, 0, Math.max(0, s.stun - 0.6) * 1.2));
-    const elbow = new THREE.Vector3().lerpVectors(SHOULDER, hnd.position, 0.5).add(new THREE.Vector3(0.3, -0.25, 0));
-    setLimb(a.children[0] as THREE.Mesh, SHOULDER, elbow);
-    setLimb(a.children[1] as THREE.Mesh, elbow, hnd.position);
-    hnd.lookAt(hnd.position.clone().add(new THREE.Vector3().subVectors(hnd.position, elbow)));
-    fist.current!.scale.setScalar(1 + Math.min(s.hand, 10) * 0.025);
+    // A bitten hand is snatched back: eased into, so it does not jump a hand's width in one frame.
+    s.kick += (Math.max(0, s.stun - 0.6) * 1.2 - s.kick) * (1 - Math.exp(-dt * 26));
+    hnd.position.copy(handPos); hnd.position.x += jolt; hnd.position.z += s.kick;
+    vElbow.lerpVectors(SHOULDER, hnd.position, 0.5); vElbow.x += 0.3; vElbow.y -= 0.25;
+    setLimb(a.children[0] as THREE.Mesh, SHOULDER, vElbow);
+    setLimb(a.children[1] as THREE.Mesh, vElbow, hnd.position);
+    faceLocal(hnd, vA.subVectors(hnd.position, vElbow).add(hnd.position)); // the hand carries on along the forearm
+    // The fist swells as it fills, and gives a little squeeze as each coin lands in it.
+    s.grip += (Math.min(s.hand, 10) * 0.025 - s.grip) * (1 - Math.exp(-dt * 12));
+    s.pop *= Math.exp(-dt * 11);
+    fist.current!.scale.setScalar((1 + s.grip) * (1 + s.pop * 0.14));
     // ---- Coins flying from the heap into your hand.
     fly.current.forEach((f, i) => {
       const m = flyers.current[i]; if (!m) return;
       if (!f.on) { m.visible = false; return; }
-      f.t += dt / 0.22;
+      f.t = Math.min(1, f.t + dt / 0.22); // never past the hand
       f.to.copy(hnd.position);
       m.visible = true;
       m.position.lerpVectors(f.from, f.to, f.t); m.position.y += Math.sin(f.t * Math.PI) * 0.25;
       m.rotation.set(f.spin + f.t * 9, f.t * 5, 0);
-      if (f.t >= 1) f.on = false;
+      if (f.t >= 1) { f.on = false; s.pop = 1; }
     });
     // ---- Your pile on the table, growing coin by coin in little stacks.
+    // A banked handful drops onto its stacks one coin after another, in time with the clinks, each with a small
+    // bounce; only the coins still landing are rewritten.
     const pm = pile.current!;
     const n = Math.min(60, s.banked);
-    if (pm.count !== n) {
-      const o = new THREE.Object3D();
-      for (let i = 0; i < n; i++) {
+    if (n !== s.pileTo) { s.pileFrom = Math.min(s.pileTo, n); s.pileTo = n; s.bankT = 0; s.pileLive = true; }
+    if (s.pileLive) {
+      s.bankT += dt;
+      for (let i = s.pileFrom; i < n; i++) {
         const stack = Math.floor(i / 8), h = i % 8;
         const sx = 1.12 + (stack % 3) * 0.17, sz = 0.55 + Math.floor(stack / 3) * 0.17;
-        o.position.set(sx + Math.sin(i * 7.1) * 0.012, TOP + 0.01 + h * 0.017, sz + Math.cos(i * 3.3) * 0.012); o.rotation.set(0, i, 0); o.updateMatrix();
-        pm.setMatrixAt(i, o.matrix);
+        const age = s.bankT - (i - s.pileFrom) * 0.04, late = age - 0.18;
+        const lift = age <= 0 ? 0.3 : late < 0 ? 0.3 * (1 - (age / 0.18) ** 2) : 0.03 * Math.abs(Math.sin(late * 24)) * Math.exp(-late * 10);
+        stamp.position.set(sx + Math.sin(i * 7.1) * 0.012, TOP + 0.01 + h * 0.017 + lift, sz + Math.cos(i * 3.3) * 0.012);
+        stamp.rotation.set(lift * 2, i + lift * 5, 0);
+        stamp.scale.setScalar(age <= 0 ? 0.001 : 1); // not dealt yet
+        stamp.updateMatrix();
+        pm.setMatrixAt(i, stamp.matrix);
       }
       pm.count = n; pm.instanceMatrix.needsUpdate = true;
+      if (s.bankT > (n - s.pileFrom) * 0.04 + 0.75) s.pileLive = false;
     }
     // A red flash on a bite.
     if (bitFlash.current) bitFlash.current.intensity = Math.max(0, 1 - (clock.elapsedTime - s.bitT) * 3) * 180;
     // ---- The camera: over your shoulder at the basket, leaning in while your hand is in; a jolt when bitten.
     camPos.set(room.x + AT[0] + 0.9 - e * 0.25, RIM + 2.0 - e * 0.35, room.z + AT[1] + 3.6 - e * 0.6);
     camLook.set(room.x + AT[0], RIM + 0.25, room.z + AT[1] - 0.1);
+    // Both the eye and what it looks at glide from where the stage left them; the look used to cut on frame one.
+    if (!s.cam) { s.cam = true; lookNow.set(room.x + AT[0], RIM, room.z + AT[1]); }
     camera.position.lerp(camPos, 1 - Math.exp(-dt * 5));
-    camera.lookAt(camLook);
+    lookNow.lerp(camLook, 1 - Math.exp(-dt * 5));
+    camera.lookAt(lookNow);
     s.shake = Math.max(0, s.shake - dt * 1.6);
     if (s.shake > 0) { const k = s.shake * s.shake; camera.rotateZ(Math.sin(clock.elapsedTime * 47) * k * 0.05); camera.rotateX(Math.sin(clock.elapsedTime * 31) * k * 0.035); }
     const pc = camera as THREE.PerspectiveCamera;
     const fov = 46 - danger * 4;
-    if (Math.abs(pc.fov - fov) > 0.05) { pc.fov += (fov - pc.fov) * Math.min(1, dt * 6); pc.updateProjectionMatrix(); }
+    if (Math.abs(pc.fov - fov) > 0.05) { pc.fov += (fov - pc.fov) * (1 - Math.exp(-dt * 6)); pc.updateProjectionMatrix(); }
   });
 
   return (
@@ -470,7 +521,7 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
 const up = new THREE.Vector3(0, 1, 0);
 /** Stretch a unit cylinder between two points. */
 function setLimb(m: THREE.Mesh, a: THREE.Vector3, b: THREE.Vector3) {
-  const d = new THREE.Vector3().subVectors(b, a), len = d.length();
+  const d = vLimb.subVectors(b, a), len = d.length();
   m.position.copy(a).addScaledVector(d, 0.5);
   m.quaternion.setFromUnitVectors(up, d.normalize());
   m.scale.set(1, len, 1);
@@ -478,6 +529,14 @@ function setLimb(m: THREE.Mesh, a: THREE.Vector3, b: THREE.Vector3) {
 
 function Hud() {
   const s = ui.use();
+  // The bite flash has to clear by itself: `fresh` is only worked out when something re-renders this, and after
+  // the third bite nothing does, so the screen stayed full red until the result card.
+  const [, redraw] = useState(0);
+  useEffect(() => {
+    if (!s.flash) return;
+    const id = setTimeout(() => redraw((n) => n + 1), Math.max(0, 500 - (performance.now() - s.flash)) + 30);
+    return () => clearTimeout(id);
+  }, [s.flash]);
   const fresh = performance.now() - s.flash < 500;
   return (
     <>
@@ -491,10 +550,10 @@ function Hud() {
         <div className="asp-lives">{Array.from({ length: LIVES }, (_, i) => <i key={i} className={i < s.lives ? '' : 'gone'} />)}</div>
       </div>
       <div className="game-hud">
-        {s.hand > 0 && <div className="big asp-hand">{s.hand}<small>in hand</small></div>}
+        {s.hand > 0 && <div key={s.hand} className="big asp-hand">{s.hand}<small>in hand</small></div>}
         {s.bonus && <div className="asp-bonus">{s.bonus}</div>}
         <div className="line">{s.line}</div>
-        <div className="hint"><kbd>Space</kbd> hold to reach in · let go to bank</div>
+        <div className="hint"><kbd>Space</kbd> hold to reach in · let go to bank · get out when it rears</div>
       </div>
     </>
   );
@@ -503,7 +562,7 @@ function Hud() {
 register({
   id: 'asp', name: 'The Asp’s Basket',
   pitch: 'Hold to reach into the asp’s basket and draw out gold; let go to bank it. When it rears, hisses and its eyes go red, get your hand out. Bank 30 coins in 60 seconds. Three bites and you’re done.',
-  keys: [['Space', 'hold to reach, release to bank'], ['Esc', 'leave']],
+  keys: [['Space', 'hold to reach in, let go to bank (E or Enter also work)'], ['Esc', 'leave']],
   entry: 400,
   Station, Play, Hud,
   view: () => ({ pos: [AT[0] + 1.2, RIM + 2.6, AT[1] + 4.6], look: [AT[0], RIM, AT[1]] }),

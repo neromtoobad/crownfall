@@ -7,7 +7,7 @@
 // dice are rolled on chain in the block that takes your stake, you make one bid, and Haseeb's five are rolled from the
 // block that takes it. If both cups show at least that many of the face, the contract pays fair odds less 5% from the
 // Library's bank; if not, the stake goes to the bank.
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { burst, voice } from '../realm/sound.ts';
@@ -22,6 +22,9 @@ const START = 5;       // dice each
 const DIE = 0.27;
 const SIDE = { you: 1, him: -1 } as const;
 const CUP_Z = 0.95;
+// Where the cards look from and at (the hall's frame); the round's camera hands back to this look at the end.
+const VIEW = { pos: [0, TOP + 3.2, 4.6] as [number, number, number], look: [0, TOP, -0.4] as [number, number, number] };
+const smooth = (x: number) => { const u = Math.min(1, Math.max(0, x)); return u * u * (3 - 2 * u); };
 
 // ---- The pieces.
 const cupGeo = (() => {
@@ -129,21 +132,30 @@ interface S {
   bid?: Bid; think: number; reveal?: { n: number; ok: boolean; loser: Who }; nextRattle: number; done: boolean;
   /** On NEAR: what the contract paid for the bid. */
   paid: number;
+  /** Per cup (yours, his), eased every frame so no phase change can snap a cup: how far it is lifted aside (0..1),
+   *  how hard it rattles, and a short hop when its owner bids. */
+  lift: [number, number]; rattle: [number, number]; knock: [number, number];
+  /** The reveal is done and the cups are coming back down over the dice, before the next deal. */
+  cover: boolean;
+  lean: number; seeded: boolean;
 }
 
 function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
   const camera = useThree((st) => st.camera);
-  const s = useRef<S>({ phase: 'roll', t: 0, turn: 'you', starter: Math.random() < 0.5 ? 'you' : 'him', yours: [], his: [], you: START, him: START, think: 0, nextRattle: 0, done: false, paid: 0 }).current;
+  const s = useRef<S>({ phase: 'roll', t: 0, turn: 'you', starter: Math.random() < 0.5 ? 'you' : 'him', yours: [], his: [], you: START, him: START, think: 0, nextRattle: 0, done: false, paid: 0, lift: [0, 0], rattle: [0, 0], knock: [0, 0], cover: false, lean: 0, seeded: false }).current;
   const cups = useRef<(THREE.Group | null)[]>([]);
   const dice = useRef<(THREE.Group | null)[]>([]);
   const faces = useRef<(THREE.Mesh | null)[]>([]);
   const yaws = useMemo(() => Array.from({ length: START * 2 }, () => Math.random() * Math.PI * 2), []);
-  const camPos = useMemo(() => new THREE.Vector3(), []), camLook = useMemo(() => new THREE.Vector3(), []);
+  const camPos = useMemo(() => new THREE.Vector3(), []), camLook = useMemo(() => new THREE.Vector3(), []), look = useMemo(() => new THREE.Vector3(), []);
+  // A bid on NEAR can come back after you have walked out: it must not write to a table that is gone.
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
   const say = (line: string) => { ui.set({ line, who: 'Haseeb Qureshi' }); voice('lord', line.length, 0); };
   const tell = (line: string) => ui.set({ line, who: '' });
   const deal = () => {
-    s.yours = roll(s.you); s.his = roll(s.him); s.bid = undefined; s.reveal = undefined;
+    s.yours = roll(s.you); s.his = roll(s.him); s.bid = undefined; s.reveal = undefined; s.cover = false;
     s.phase = 'roll'; s.t = 0; s.turn = s.starter;
     ui.set({ phase: 'roll', you: s.you, him: s.him, yours: [...s.yours].sort(), bid: undefined, reveal: undefined, turn: s.turn });
     tell('Both cups rattle.');
@@ -176,7 +188,7 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     ui.set({ phase: 'wait', bid: s.bid });
     tell(`You bid ${bidText({ q, f })}. Haseeb’s dice are rolled from the block that takes it…`);
     bidLibrary(round, q, f).then((r) => {
-      if (s.done) return;
+      if (s.done || !alive.current) return;
       s.his = r.his ?? [];
       const n = r.shown ?? count(s.yours, f) + count(s.his, f);
       s.reveal = { n, ok: r.won, loser: r.won ? 'him' : 'you' };
@@ -184,7 +196,7 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
       s.phase = 'reveal'; s.t = 0;
       ui.set({ phase: 'reveal', reveal: s.reveal });
     }).catch((e: Error) => {
-      if (s.done) return;
+      if (s.done || !alive.current) return;
       session.chainRound = round;
       s.bid = undefined; s.phase = 'bid'; s.t = 0;
       ui.set({ phase: 'bid', bid: undefined });
@@ -197,7 +209,7 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     if (!wager) { deal(); return; }
     sitDown();
     // If the dice couldn't be read back at the stake, read them now.
-    if (!session.lib?.cup && session.chainRound !== undefined) void library(session.chainRound).then((l) => { session.lib = l; sitDown(); }).catch(() => tell('Couldn’t read your cup from NEAR. Esc to leave (the stake goes to the Library).'));
+    if (!session.lib?.cup && session.chainRound !== undefined) void library(session.chainRound).then((l) => { if (!alive.current) return; session.lib = l; sitDown(); }).catch(() => alive.current && tell('Couldn’t read your cup from NEAR. Esc to leave (the stake goes to the Library).'));
     /* eslint-disable-line react-hooks/exhaustive-deps */
   }, []);
 
@@ -207,7 +219,8 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
   };
   const place = (b: Bid) => {
     s.bid = b; s.turn = b.who === 'you' ? 'him' : 'you'; s.think = 1.1 + Math.random() * 1.1;
-    burst(2400, 2, 0.03, 0.08);
+    burst(2400, 2, 0.03, 0.08); burst(320, 1.6, 0.05, 0.07);
+    s.knock[b.who === 'you' ? 0 : 1] = 1;
     ui.set({ bid: b, turn: s.turn, pick: s.turn === 'you' ? defaultPick() : ui.state.pick });
   };
   const call = (who: Who) => {
@@ -254,7 +267,7 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     if (s.done) return;
 
     if (s.phase === 'roll') {
-      if (clock.elapsedTime > s.nextRattle && s.t < 1.2) { burst(2200 + Math.random() * 1600, 1.4, 0.06, 0.05); s.nextRattle = clock.elapsedTime + 0.06 + Math.random() * 0.05; }
+      if (clock.elapsedTime > s.nextRattle && s.t < 1.1) { burst(2200 + Math.random() * 1600, 1.4, 0.06, 0.05); s.nextRattle = clock.elapsedTime + 0.06 + Math.random() * 0.05; }
       if (s.t > 1.35) { s.phase = 'peek'; s.t = 0; ui.set({ phase: 'peek' }); tell('You tip your cup and look.'); }
     } else if (s.phase === 'peek') {
       if (s.t > 0.9) {
@@ -265,7 +278,7 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
           tell('One bid: how many of one face lie under both cups?');
         } else {
           ui.set({ phase: 'bid', pick: defaultPick() });
-          if (s.turn === 'you') tell('You open the bidding.'); else tell('Haseeb opens.');
+          if (s.turn === 'you') tell('You open the bidding. Choose how many and which face, then bid.'); else tell('Haseeb opens.');
         }
       }
     } else if (s.phase === 'bid' && wager) {
@@ -281,10 +294,10 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
           if (qt.need < 1) { tell(`You hold ${NUM[qt.have]} yourself: bid more than that.`); continue; }
           if (qt.need > 5) { tell('Haseeb only has five dice.'); continue; }
           if (!qt.cover) { tell('The Library’s bank can’t cover that bid. Bid lower.'); continue; }
-          bidOnChain(q, f); return;
+          bidOnChain(q, f); break;
         }
       }
-      if (q !== ui.state.pick.q || f !== ui.state.pick.f) { ui.set({ pick: { q, f }, quote: quote(q, f), line: 'One bid: how many of one face lie under both cups?', who: '' }); burst(1500, 3, 0.02, 0.04); }
+      if (s.phase === 'bid' && (q !== ui.state.pick.q || f !== ui.state.pick.f)) { ui.set({ pick: { q, f }, quote: quote(q, f), line: 'One bid: how many of one face lie under both cups?', who: '' }); burst(1500, 3, 0.02, 0.04); }
     } else if (s.phase === 'wait') {
       if (clock.elapsedTime > s.nextRattle) { burst(2200 + Math.random() * 1600, 1.4, 0.04, 0.05); s.nextRattle = clock.elapsedTime + 0.08 + Math.random() * 0.08; }
     } else if (s.phase === 'reveal' && wager) {
@@ -315,9 +328,13 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
           else if (k === 'd' || k === 'arrowright') f = f % 6 + 1;
           else if (k === 'a' || k === 'arrowleft') f = ((f + 4) % 6) + 1;
           else if (k === 'e' || k === 'enter') {
-            if (higher({ q, f }, s.bid)) { place({ q, f, who: 'you' }); tell(`You bid ${bidText({ q, f })}.`); return; }
-            tell(`Bid higher than ${bidText(s.bid!)}: more dice, or as many of a higher face.`);
-          } else if ((k === ' ' || k === 'l') && s.bid && s.bid.who === 'him') { call('you'); return; }
+            // A bid or a call ends your turn: stop reading keys, so one frame can't act twice.
+            if (higher({ q, f }, s.bid)) { place({ q, f, who: 'you' }); tell(`You bid ${bidText({ q, f })}.`); break; }
+            tell(`Bid higher than ${bidText(s.bid!)}: more dice, or as many of a higher face.`); burst(220, 1.4, 0.06, 0.1);
+          } else if (k === ' ' || k === 'l') {
+            if (s.bid && s.bid.who === 'him') { call('you'); break; }
+            tell('Nothing to call yet. Make the first bid.'); burst(220, 1.4, 0.06, 0.1);
+          }
         }
         if (q !== ui.state.pick.q || f !== ui.state.pick.f) { ui.set({ pick: { q, f } }); burst(1500, 3, 0.02, 0.04); }
       }
@@ -327,18 +344,21 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
         burst(900, 1, 0.06, 0.3);
         tell(`${NUM[r.n] ?? r.n} ${r.n === 1 ? FACE_NAME[s.bid!.f].replace(/s$/, '').replace('sixe', 'six') : FACE_NAME[s.bid!.f]} on the table. ${r.ok ? 'The bid was true.' : 'It was a lie.'} ${r.loser === 'you' ? 'You lose a die.' : 'Haseeb loses a die.'}`);
       }
+      if (s.t > 3.0 && s.t - dt <= 3.0) burst(180, 1.2, 0.12, 0.25);
       if (s.t > 3.4 && s.t - dt <= 3.4) {
         if (r.loser === 'you') s.you--; else s.him--;
         ui.set({ you: s.you, him: s.him });
         if (r.loser === 'him') say(any(LINES.heLoses)); else if (s.you > 0) say(any(LINES.heWins));
       }
-      if (s.t > 4.6) {
+      if (s.t > 4.6 && !s.cover) {
         if (s.you === 0 || s.him === 0) {
           s.phase = 'over'; s.t = 0; ui.set({ phase: 'over' });
           if (s.him === 0) { say('Well played. I’ll be thinking about that last call for a week.'); burst(1800, 3, 0.05, 0.5); }
           else say('The Library keeps your stake. Come back when you’ve read the table.');
-        } else { s.starter = r.loser; deal(); }
+        } else s.cover = true;
       }
+      // Both cups come back down over the dice first; only then are they rolled again, so no die changes in plain sight.
+      if (s.cover && s.t > 5.15) { s.starter = r.loser; deal(); }
     } else if (s.phase === 'over' && s.t > 2.4) {
       s.done = true;
       const won = s.him === 0;
@@ -346,23 +366,31 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
       return;
     }
 
-    // ---- The cups: rattling, your peek, both lifted at the reveal.
+    // ---- The cups: rattling, your peek, both lifted at the reveal. Lift and rattle are eased toward what the phase
+    // wants (never read off the phase clock), so a cup that is already open stays open from bid to reveal to the end,
+    // and comes back over the dice before a new deal.
     const reveal = s.phase === 'reveal' || s.phase === 'over';
+    const T = clock.elapsedTime;
     for (const who of ['you', 'him'] as const) {
-      const g = cups.current[who === 'you' ? 0 : 1]; if (!g) continue;
-      const side = SIDE[who];
-      let y = TOP, rx = 0, x = 0, z = side * CUP_Z;
-      if (s.phase === 'wait' && who === 'him') { y += 0.08 + Math.abs(Math.sin(s.t * 34)) * 0.07; x = Math.sin(s.t * 29) * 0.05; rx = Math.sin(s.t * 25) * 0.08; }
-      if (s.phase === 'roll') { const k = Math.min(1, s.t / 0.2) * (s.t < 1.2 ? 1 : 0); y += 0.12 * k + Math.abs(Math.sin(s.t * 38 + side)) * 0.08 * k; x = Math.sin(s.t * 31 + side) * 0.06 * k; rx = Math.sin(s.t * 27) * 0.1 * k; }
+      const c = who === 'you' ? 0 : 1, side = SIDE[who];
       const peek = who === 'you' && (s.phase === 'peek' || s.phase === 'bid' || s.phase === 'wait');
-      const lift = reveal ? Math.min(1, s.t / 0.5) : peek ? Math.min(1, (s.phase === 'peek' ? s.t : 1) / 0.5) : 0;
+      s.lift[c] += (((reveal || peek) && !s.cover ? 1 : 0) - s.lift[c]) * (1 - Math.exp(-dt * 7));
+      const shaking = s.phase === 'roll' ? (s.t < 1.1 ? 1 : 0) : s.phase === 'wait' && who === 'him' ? 0.75 : 0;
+      s.rattle[c] += (shaking - s.rattle[c]) * (1 - Math.exp(-dt * 14));
+      s.knock[c] = Math.max(0, s.knock[c] - dt * 4);
+      const g = cups.current[c]; if (!g) continue;
+      const lift = s.lift[c], r = s.rattle[c];
+      let y = TOP + (0.12 + Math.abs(Math.sin(T * 38 + side)) * 0.08) * r + Math.sin(s.knock[c] * Math.PI) * 0.07;
+      let x = Math.sin(T * 31 + side) * 0.06 * r, z = side * CUP_Z;
+      const rx = Math.sin(T * 27) * 0.1 * r;
       // Lifted and set down on its side next to the dice, so nothing hides them from you.
-      let rz = 0;
-      if (lift > 0) { const up = Math.sin(lift * Math.PI) * 0.6; x += side * lift * 0.95; y += up + lift * 0.42; z -= side * lift * 0.15; rz = -side * lift * (Math.PI / 2); }
-      g.position.set(x, y, z); g.rotation.set(rx, 0, rz);
+      const up = Math.sin(lift * Math.PI) * 0.6;
+      x += side * lift * 0.95; y += up + lift * 0.42; z -= side * lift * 0.15;
+      g.position.set(x, y, z); g.rotation.set(rx, 0, -side * lift * (Math.PI / 2));
     }
-    // ---- The dice, with the matching ones lit gold at the reveal.
+    // ---- The dice, with the matching ones lit gold at the reveal (and kept lit to the end of it).
     const showYours = s.phase !== 'roll';
+    const counted = s.phase === 'over' || s.t > 0.75;
     for (let i = 0; i < START * 2; i++) {
       const g = dice.current[i], m = faces.current[i]; if (!g || !m) continue;
       const mine = i < START, k = mine ? i : i - START, list = mine ? s.yours : s.his;
@@ -370,28 +398,38 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
       g.visible = vis;
       if (!vis) continue;
       const [ox, oz] = SPOTS[k], side = mine ? 1 : -1;
-      g.position.set(ox, TOP + DIE / 2, side * CUP_Z + oz);
+      const hot = reveal && !!s.bid && list[k] === s.bid.f && counted;
+      // A counted die hops once as it lights.
+      const hop = hot && s.phase === 'reveal' ? Math.sin(Math.min(1, (s.t - 0.75) / 0.3) * Math.PI) * 0.07 : 0;
+      g.position.set(ox, TOP + DIE / 2 + hop, side * CUP_Z + oz);
       g.rotation.set(0, yaws[i], 0);
       const up = UP[list[k]]; m.rotation.set(up[0], up[1], up[2]);
-      const hot = reveal && s.bid && list[k] === s.bid.f && s.t > 0.75;
       m.material = hot ? hotMats : dieMats;
-      // The die that's lost sinks away.
-      const lost = s.phase === 'reveal' && s.reveal && s.t > 3.0 && ((s.reveal.loser === 'you') === mine) && k === list.length - 1;
-      g.scale.setScalar(lost ? Math.max(0.001, 1 - (s.t - 3.0) / 0.4) : 1);
+      // The die that's lost shrinks away, and stays gone until the next deal (or the end of the game). On NEAR there
+      // is one bid and nobody loses a die.
+      const lost = !wager && reveal && !!s.reveal && ((s.reveal.loser === 'you') === mine) && k === list.length - 1;
+      g.scale.setScalar(!lost ? 1 : s.phase === 'over' ? 0.001 : Math.max(0.001, 1 - smooth((s.t - 3.0) / 0.4)));
     }
 
-    // ---- The camera: your side of the table, leaning in at the reveal.
-    const lean = reveal ? 1 : 0;
-    camPos.set(room.x, TOP + 3.0 - lean * 0.4, room.z + 3.2 - lean * 0.6);
-    camLook.set(room.x, TOP + 0.1, room.z - 0.1 - lean * 0.15);
-    camera.position.lerp(camPos, 1 - Math.exp(-dt * 4));
-    camera.lookAt(camLook);
+    // ---- The camera: your side of the table, leaning in at the reveal. Where it sits, where it looks and the lean
+    // are all eased, and the look starts from wherever the card's camera was looking and ends on the card's own look.
+    s.lean += ((reveal ? 1 : 0) - s.lean) * (1 - Math.exp(-dt * 3));
+    camPos.set(room.x, TOP + 3.0 - s.lean * 0.4, room.z + 3.2 - s.lean * 0.6);
+    if (s.phase === 'over' && s.t > 1.6) camLook.set(room.x + VIEW.look[0], VIEW.look[1], room.z + VIEW.look[2]);
+    else camLook.set(room.x, TOP + 0.1, room.z - 0.1 - s.lean * 0.15);
+    if (!s.seeded) { s.seeded = true; camera.getWorldDirection(look).multiplyScalar(camera.position.distanceTo(camLook)).add(camera.position); }
+    const ck = 1 - Math.exp(-dt * 4);
+    camera.position.lerp(camPos, ck);
+    look.lerp(camLook, ck);
+    camera.lookAt(look);
+    const pc = camera as THREE.PerspectiveCamera;
+    if (Math.abs(pc.fov - 50) > 0.1) { pc.fov += (50 - pc.fov) * ck; pc.updateProjectionMatrix(); }
   });
 
   return (
     <group>
       {[0, 1].map((i) => (
-        <group key={i} ref={(g) => { cups.current[i] = g; }}>
+        <group key={i} ref={(g) => { cups.current[i] = g; }} position={[0, TOP, (i === 0 ? 1 : -1) * CUP_Z]}>
           <mesh geometry={cupGeo} material={cupMat} castShadow />
           <mesh position-y={0.62} rotation-x={Math.PI / 2} material={bandMat}><torusGeometry args={[0.39, 0.022, 6, 36]} /></mesh>
         </group>
@@ -463,5 +501,5 @@ register({
   keys: [['W S', 'how many'], ['A D', 'which face'], ['E', 'bid'], ['Space', 'call “Liar!”'], ['Esc', 'leave']],
   entry: 1,
   Station, Play, Hud,
-  view: () => ({ pos: [0, TOP + 3.2, 4.6], look: [0, TOP, -0.4] }),
+  view: () => VIEW,
 });

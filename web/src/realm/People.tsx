@@ -8,7 +8,7 @@ import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js
 import { ground } from './heights.ts';
 import { walkY } from './bridges.ts';
 import { HOUSES, ROADS, roadCurve, routeBetween, yardOf } from './layout.ts';
-import { crowd as solidCrowd } from './collide.ts';
+import { PERSON_R, beastLists, crowd as solidCrowd, driven } from './collide.ts';
 import { me, play } from './play.ts';
 import { speakAs } from './barks.ts';
 
@@ -54,31 +54,171 @@ export function useSolid(objs: THREE.Object3D[]) {
     return () => { for (const o of objs) solidCrowd.delete(o); };
   }, [objs]);
 }
-/** A figure someone bumped stops for a moment; one a chariot charged at leaps aside and comes back slowly. Returns the lateral offset. */
-function react(o: THREE.Object3D, now: number, dt: number) {
-  const u = o.userData as { bump?: number; dodge?: number; off?: number };
-  const target = u.dodge && now - (u.bump ?? 0) < 3 ? u.dodge : 0;
-  u.off = (u.off ?? 0) + (target - (u.off ?? 0)) * Math.min(1, dt * (target ? 9 : 0.8));
-  return { stopped: now - (u.bump ?? -9) < 1.2, off: u.off };
+/** The walk clip of one figure, and the two moments in it where the feet pass each other (where it comes to rest). */
+interface Gait { action: THREE.AnimationAction; dur: number; rests: readonly [number, number] }
+/** One rigged figure walking along a curve. `t` is the distance travelled, in units. `side` is where across the road
+ * it likes to walk (its own right is positive), `lat` where across the road it is now, `v` its pace from 0 to 1. */
+interface Walker {
+  curve: THREE.Curve<THREE.Vector3>; len: number; t: number; speed: number; dir: 1 | -1; side: number; mixer: THREE.AnimationMixer; obj: THREE.Object3D;
+  lat: number; v: number; tx: number; tz: number; wait: number; gait?: Gait;
 }
 
-/** One rigged figure walking along a curve. `t` is the distance travelled, in units. */
-interface Walker { curve: THREE.Curve<THREE.Vector3>; len: number; t: number; speed: number; dir: 1 | -1; side: number; mixer: THREE.AnimationMixer; obj: THREE.Object3D }
-
 const tmp = new THREE.Vector3(), tan = new THREE.Vector3();
+const clampN = THREE.MathUtils.clamp;
 // ?follow=N rides the camera behind traveller N (checks, demo recording).
 const FOLLOW = Number(new URLSearchParams(location.search).get('follow') ?? NaN);
 const camGoal = new THREE.Vector3(), lookGoal = new THREE.Vector3();
 
 function place(w: Walker, offsetBack = 0, lateral = 0) {
-  const d = THREE.MathUtils.clamp(w.t - offsetBack * w.dir, 0, w.len);
+  const d = clampN(w.t - offsetBack * w.dir, 0, w.len);
   const u = d / w.len;
   w.curve.getPointAt(u, tmp);
   w.curve.getTangentAt(u, tan).multiplyScalar(w.dir);
+  w.tx = tan.x; w.tz = tan.z;
   const nx = -tan.z, nz = tan.x;
   const x = tmp.x + nx * (w.side + lateral), z = tmp.z + nz * (w.side + lateral);
   w.obj.position.set(x, walkY(x, z), z);
   w.obj.rotation.y = Math.atan2(tan.x, tan.z);
+}
+
+/** What folk on foot keep clear of: you, and every horse and chariot, standing or driven. Gathered once a frame. */
+interface Hazard { x: number; z: number; r: number; you?: boolean }
+const hazards: Hazard[] = [];
+const you: Hazard = { x: 0, z: 0, r: 0.9, you: true };
+let hazardStamp = -1;
+function gather(stamp: number) {
+  if (stamp === hazardStamp) return hazards;
+  hazardStamp = stamp;
+  hazards.length = 0;
+  if (play.mode === 'play' && !play.driving && !play.racing && !play.game) { you.x = me.x; you.z = me.z; hazards.push(you); }
+  for (const list of beastLists()) for (const b of list) hazards.push(b);
+  for (const b of driven) hazards.push(b);
+  return hazards;
+}
+
+/** Where across the road a figure should head, and how fast, given what is in its way. Writes `steered`. */
+const steered = { want: 0, go: 1 };
+function steer(w: Walker, hz: Hazard[], want: number, reach: number, since: number) {
+  let go = 1;
+  const px = w.obj.position.x, pz = w.obj.position.z, tx = w.tx, tz = w.tz;
+  for (const h of hz) {
+    const dx = h.x - px, dz = h.z - pz;
+    if (Math.abs(dx) > 14 || Math.abs(dz) > 14) continue;
+    const along = dx * tx + dz * tz, across = dz * tx - dx * tz, R = h.r + PERSON_R + 0.45;
+    if (along < -R || along > 9) continue;
+    // Step round it on the nearer side, if the road is wide enough there.
+    const hl = w.lat + across;
+    if (Math.abs(hl - want) < R) {
+      const a = hl - R, b = hl + R, first = Math.abs(a - want) < Math.abs(b - want) ? a : b, other = first === a ? b : a;
+      if (Math.abs(first) <= reach) want = first; else if (Math.abs(other) <= reach) want = other;
+    }
+    // Still straight ahead: slow, and stop short of it.
+    if (along > 0.2 && Math.abs(across) < R - 0.1) go = Math.min(go, clampN((along - R) / 3.5, 0, 1));
+    // Bumped by you: stand a moment, unless you came up from behind (then it just keeps walking).
+    if (h.you && since < 1.2 && along > -0.4) go = 0;
+  }
+  steered.want = want; steered.go = go;
+}
+
+/** Everyone walking the roads, so a quicker walker can pass a slower one instead of walking through them. */
+const roadFolk = new Set<Walker>();
+/** Every army on the march, as the places its soldiers stand: road folk step off the road to let a column by. */
+const columns = new Map<string, { x: number; z: number }[]>();
+
+/**
+ * Walk one figure a frame along its curve: round whatever stands in its way where there is room, slowing to a stop
+ * short of it where there isn't, and never into it. One a chariot charged at leaps aside. Returns how fast it really
+ * moved (1 = its own pace), which drives its walk clip.
+ * 'road' folk walk up and down, turn at the ends, pass slower folk and make way for armies; 'loop' folk go round and
+ * round; a 'file' soldier keeps its place in a column, `slot` being how far along the road that place has got to.
+ */
+function stride(w: Walker, hz: Hazard[], now: number, dt: number, reach: number, mode: 'road' | 'loop' | 'file', slot = 0) {
+  const u = w.obj.userData as { bump?: number; dodge?: number };
+  const since = now - (u.bump ?? -9);
+  const leap = u.dodge && since < 3 ? u.dodge : 0;
+  const px = w.obj.position.x, pz = w.obj.position.z;
+  // A leap takes it to the edge of the road and no further (off a bridge, say).
+  let want = leap ? clampN(w.side + leap, -5, 5) : w.side;
+  if (mode === 'road') {
+    // An army coming through: off to the side of the road, whichever side is nearer.
+    let sum = 0, n = 0;
+    for (const col of columns.values()) for (const p of col) {
+      const dx = p.x - px, dz = p.z - pz;
+      if (Math.abs(dx) > 18 || Math.abs(dz) > 18) continue;
+      const along = dx * w.tx + dz * w.tz;
+      if (along > -5 && along < 16) { sum += w.lat + dz * w.tx - dx * w.tz; n++; }
+    }
+    if (n) { const c = sum / n; want = clampN(c + (w.lat >= c ? 4.1 : -4.1), -reach, reach); }
+    // Someone slower just ahead: pass them on the inside.
+    else for (const o of roadFolk) {
+      if (o === w || o.curve !== w.curve || o.dir !== w.dir || o.speed >= w.speed) continue;
+      const ahead = (o.t - w.t) * w.dir;
+      if (ahead > -2.5 && ahead < 5 && Math.abs(o.lat - want) < 1.5) want = o.lat - 1.6 >= -0.6 ? o.lat - 1.6 : o.lat + 1.6;
+    }
+  }
+  // A soldier doesn't stop because you walked into him. One left far behind his rank stops for nothing at all.
+  const lagging = mode === 'file' && slot - w.t > 7;
+  steer(w, hz, want, reach, mode === 'file' ? 9 : since);
+  want = steered.want;
+  let go = lagging ? 1 : steered.go;
+  if (mode !== 'file') {
+    // Kept waiting a good while, or at the end of the road: turn round and go back.
+    w.wait = go < 0.05 && w.v < 0.05 ? w.wait + dt : 0;
+    let turn = w.wait > 5;
+    if (mode === 'road' && !turn) { const next = w.t + w.speed * w.dir * dt; turn = next > w.len || next < 0; }
+    if (turn) { w.dir = (w.dir * -1) as 1 | -1; w.lat = -w.lat; w.tx = -w.tx; w.tz = -w.tz; w.v = 0; w.wait = 0; go = 0; }
+  }
+  w.v += clampN(go - w.v, -dt * 5, dt * 2);
+  const rate = leap ? 16 : 3;
+  const lat = w.lat + clampN(want - w.lat, -rate * dt, rate * dt);
+  let t = mode === 'file' ? w.t + clampN(slot - w.t, 0, w.speed * 1.5 * dt) * w.v : w.t + w.speed * w.dir * w.v * dt;
+  t = mode === 'loop' ? ((t % w.len) + w.len) % w.len : clampN(t, 0, w.len);
+  const k = t / w.len;
+  w.curve.getPointAt(k, tmp);
+  w.curve.getTangentAt(k, tan).multiplyScalar(w.dir);
+  let x = tmp.x - tan.z * lat, z = tmp.z + tan.x * lat, held = false;
+  // Never into anything: a step that would end inside a hazard, and nearer to it than before, isn't taken.
+  if (!lagging) for (const h of hz) {
+    const min = h.r + PERSON_R, ex = x - h.x, ez = z - h.z;
+    if (Math.abs(ex) > min || Math.abs(ez) > min) continue;
+    const d2 = ex * ex + ez * ez;
+    if (d2 < min * min && d2 < (px - h.x) ** 2 + (pz - h.z) ** 2) { held = true; break; }
+  }
+  if (held) { x = px; z = pz; w.v = 0; } else { w.t = t; w.lat = lat; w.tx = tan.x; w.tz = tan.z; }
+  const mx = x - px, mz = z - pz, lead = w.speed * dt * 0.4;
+  w.obj.position.set(x, walkY(x, z), z);
+  // Face the way it is going: down the road, turning into a sidestep.
+  let dy = Math.atan2(mx + w.tx * lead, mz + w.tz * lead) - w.obj.rotation.y;
+  dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+  w.obj.rotation.y += dy * Math.min(1, dt * 7);
+  return dt > 0 ? Math.hypot(mx, mz) / (w.speed * dt) : 0;
+}
+
+/** Step the walk clip by how far the figure really moved. One that has stopped finishes its step and stands. */
+function animate(w: Walker, rate: number, dt: number) {
+  const g = w.gait;
+  if (!g || rate > 0.12) { w.mixer.update(dt * Math.min(rate, 1.5)); return; }
+  const half = g.dur / 2, ts = g.action.timeScale || 1;
+  let rem = Infinity;
+  for (const r of g.rests) { const d = (((r - g.action.time) % g.dur) + g.dur) % g.dur; if (d < rem) rem = d; }
+  // Just past a rest counts as there; otherwise carry the step through to the next one.
+  w.mixer.update(half - rem < 0.05 || rem < 1e-3 ? 0 : Math.min(rem, dt * 1.4 * ts) / ts);
+}
+
+const va = new THREE.Vector3(), vb = new THREE.Vector3();
+/** Scan half the walk clip for the moment the feet pass each other; the other such moment is half a stride later. */
+function findRests(obj: THREE.Object3D, mixer: THREE.AnimationMixer, action: THREE.AnimationAction, dur: number) {
+  const lf = obj.getObjectByName('LeftFoot'), rf = obj.getObjectByName('RightFoot');
+  if (!lf || !rf) return undefined;
+  let best = 0, bestD = Infinity;
+  for (let i = 0; i < 24; i++) {
+    const t = (i / 48) * dur;
+    action.time = t; mixer.update(0); obj.updateMatrixWorld(true);
+    lf.getWorldPosition(va); rf.getWorldPosition(vb);
+    const d = Math.hypot(va.x - vb.x, va.z - vb.z);
+    if (d < bestD) { bestD = d; best = t; }
+  }
+  return [best, best + dur / 2] as const;
 }
 
 /** Load a character and make `n` independent clones of it, each with its own mixer playing the walk clip. */
@@ -86,14 +226,22 @@ export function useCrowd(url: string, n: number, scale: number, speedUp = 1, kin
   const gltf = useGLTF(url);
   return useMemo(() => {
     const clip = gltf.animations[0];
-    return Array.from({ length: n }, () => {
+    let rests: readonly [number, number] | undefined;
+    return Array.from({ length: n }, (_, i) => {
       const obj = cloneSkinned(gltf.scene);
       obj.scale.setScalar(scale);
       obj.traverse((o) => { if ((o as THREE.Mesh).isMesh) { o.castShadow = true; o.frustumCulled = false; } });
       Object.assign(obj.userData, { kind, name, theirs, head: obj.getObjectByName('Head') });
       const mixer = new THREE.AnimationMixer(obj);
-      if (clip) { const a = mixer.clipAction(clip); a.play(); a.time = Math.random() * clip.duration; a.timeScale = speedUp; }
-      return { obj, mixer };
+      let gait: Gait | undefined;
+      if (clip) {
+        const a = mixer.clipAction(clip);
+        a.play();
+        if (i === 0) rests = findRests(obj, mixer, a, clip.duration);
+        a.time = Math.random() * clip.duration; a.timeScale = speedUp;
+        if (rests) gait = { action: a, dur: clip.duration, rests };
+      }
+      return { obj, mixer, gait };
     });
   }, [gltf, n, scale, speedUp, kind, name, theirs]);
 }
@@ -105,17 +253,21 @@ export function Travellers({ url, count = 40, scale = 2.2, followable = false }:
   const walkers = useRef<Walker[]>([]);
   useEffect(() => {
     const curves = ROADS.map(roadCurve);
-    walkers.current = crowd.map(({ obj, mixer }, i) => {
-      const curve = curves[i % curves.length];
+    const n = curves.length;
+    const made = walkers.current = crowd.map(({ obj, mixer, gait }, i): Walker => {
+      const curve = curves[i % n];
       const len = curve.getLength();
-      const dir: 1 | -1 = i % 2 ? 1 : -1;
-      return { curve, len, t: Math.random() * len, speed: 3.6 + Math.random() * 1.2, dir, side: dir * 1.6, mixer, obj };
+      // Half of each road's folk go each way; everyone keeps to their own right, so they pass instead of meeting.
+      const dir = (i + (n % 2 ? 0 : Math.floor(i / n))) % 2 ? 1 : -1;
+      return { curve, len, t: Math.random() * len, speed: 3.6 + Math.random() * 1.2, dir, side: 1.6, lat: 1.6, v: 1, tx: 0, tz: 1, wait: 0, mixer, obj, gait };
     });
-    walkers.current.forEach((w) => place(w));
-    if (import.meta.env.DEV && followable) (window as unknown as { __walkers: Walker[] }).__walkers = walkers.current;
+    for (const w of made) { place(w); roadFolk.add(w); }
+    if (import.meta.env.DEV && followable) (window as unknown as { __walkers: Walker[] }).__walkers = made;
+    return () => { for (const w of made) roadFolk.delete(w); };
   }, [crowd]);
   const controls = useThree((s) => s.controls) as unknown as { target: THREE.Vector3 } | null;
-  useFrame(({ camera }, dt) => {
+  useFrame(({ camera, clock }, rawDt) => {
+    const dt = Math.min(rawDt, 0.1);
     const f = followable ? walkers.current[FOLLOW] : undefined;
     if (f) {
       const yaw = f.obj.rotation.y;
@@ -127,16 +279,13 @@ export function Travellers({ url, count = 40, scale = 2.2, followable = false }:
       controls?.target.copy(lookGoal);
       camera.lookAt(lookGoal);
     }
-    const now = performance.now() / 1000;
+    const now = clock.elapsedTime, hz = gather(now);
     for (const w of walkers.current) {
-      const { stopped, off } = react(w.obj, now, dt);
-      if (!stopped) w.t += w.speed * w.dir * dt;
-      if (w.t > w.len || w.t < 0) { w.dir = (w.dir * -1) as 1 | -1; w.side = w.dir * 1.6; w.t = THREE.MathUtils.clamp(w.t, 0, w.len); }
-      place(w, 0, off);
+      const rate = stride(w, hz, now, dt, 4.2, 'road');
       // Only folk near you get the head-turn treatment (it costs a few matrix updates each).
       const close = (Math.abs(w.obj.position.x - me.x) < 14 && Math.abs(w.obj.position.z - me.z) < 14) || (w.obj.userData.look ?? 0) > 0.01;
       if (close) unturn(w.obj);
-      w.mixer.update(stopped ? 0 : dt);
+      animate(w, rate, dt);
       if (close) { rest(w.obj); notice(w.obj, now, dt); }
     }
   });
@@ -147,7 +296,7 @@ export function Travellers({ url, count = 40, scale = 2.2, followable = false }:
 /** A lord or lady walking a slow loop in front of their own seat, facing the road to the capital. */
 export function Promenade({ url, house, scale = 2.4 }: { url: string; house: number; scale?: number }) {
   const h = HOUSES[house];
-  const [{ obj, mixer }] = useCrowd(url, 1, scale, 0.8, 'lord', `The lord of House ${h.name}`, h.seat);
+  const [{ obj, mixer, gait }] = useCrowd(url, 1, scale, 0.8, 'lord', `The lord of House ${h.name}`, h.seat);
   const curve = useMemo(() => {
     const [cx, cz] = yardOf(HOUSES[house]);
     const pts = Array.from({ length: 8 }, (_, i) => {
@@ -156,14 +305,17 @@ export function Promenade({ url, house, scale = 2.4 }: { url: string; house: num
     });
     return new THREE.CatmullRomCurve3(pts, true);
   }, [house]);
-  const w = useMemo<Walker>(() => ({ curve, len: curve.getLength(), t: Math.random() * 40, speed: 2.4, dir: 1, side: 0, mixer, obj }), [curve, mixer, obj]);
-  useFrame((_, dt) => {
-    const { stopped, off } = react(obj, performance.now() / 1000, dt);
-    if (!stopped) w.t = (w.t + w.speed * dt) % w.len;
-    place(w, 0, off);
-    const now = performance.now() / 1000, close = Math.hypot(obj.position.x - me.x, obj.position.z - me.z) < 14 || (obj.userData.look ?? 0) > 0.01;
+  const w = useMemo(() => {
+    const made: Walker = { curve, len: curve.getLength(), t: Math.random() * 40, speed: 2.4, dir: 1, side: 0, lat: 0, v: 1, tx: 0, tz: 1, wait: 0, mixer, obj, gait };
+    place(made);
+    return made;
+  }, [curve, mixer, obj, gait]);
+  useFrame(({ clock }, rawDt) => {
+    const dt = Math.min(rawDt, 0.1), now = clock.elapsedTime;
+    const rate = stride(w, gather(now), now, dt, 2.5, 'loop');
+    const close = Math.hypot(obj.position.x - me.x, obj.position.z - me.z) < 14 || (obj.userData.look ?? 0) > 0.01;
     if (close) unturn(obj);
-    mixer.update(stopped ? 0 : dt);
+    animate(w, rate, dt);
     if (close) { rest(obj); notice(obj, now, dt); }
   });
   useSolid(useMemo(() => [obj], [obj]));
@@ -181,19 +333,41 @@ export function March({ url, order, ranks = 8, scale = 2.2, onArrive }: { url: s
   const done = useRef(false);
   const banner = useRef<THREE.Group>(null);
   const house = HOUSES[order.from];
+  // How fast the column is going (0 to 1), how long it has stood halted, and how long it has been told to press on.
+  const pace = useRef(1), halted = useRef(0), press = useRef(0);
   const walkers: Walker[] = useMemo(
-    () => crowd.map(({ obj, mixer }) => ({ curve, len, t: 0, speed: 0, dir: 1 as const, side: 0, mixer, obj })),
+    () => crowd.map(({ obj, mixer, gait }, i) => {
+      const side = ((i % 3) - 1) * 2.2;
+      obj.visible = false;
+      return { curve, len, t: 0, speed: 6.5, dir: 1 as const, side, lat: side, v: 0, tx: 0, tz: 1, wait: 0, mixer, obj, gait };
+    }),
     [crowd, curve, len],
   );
   useSolid(useMemo(() => walkers.map((w) => w.obj), [walkers]));
-  useFrame((_, dt) => {
-    head.current = Math.min(len, head.current + 6.5 * dt);
+  useEffect(() => {
+    columns.set(order.id, walkers.map((w) => w.obj.position));
+    return () => { columns.delete(order.id); };
+  }, [order.id, walkers]);
+  useFrame(({ clock }, rawDt) => {
+    const dt = Math.min(rawDt, 0.1), now = clock.elapsedTime, hz = gather(now);
+    head.current = Math.min(len, head.current + 6.5 * pace.current * dt);
+    let go = 1;
     walkers.forEach((w, i) => {
-      const rank = Math.floor(i / 3), file = (i % 3) - 1;
-      w.t = Math.max(0, head.current - 6 - rank * 3.2);
-      place(w, 0, file * 2.2 + react(w.obj, performance.now() / 1000, dt).off);
-      w.mixer.update(head.current >= len ? 0 : dt);
+      const slot = head.current - 6 - Math.floor(i / 3) * 3.2;
+      // Not through the gate yet: out of sight, and out of everyone's way.
+      if (slot <= 0) { w.obj.position.set(curve.getPointAt(0, tmp).x, -999, 99999); return; }
+      if (!w.obj.visible) { w.obj.visible = true; w.t = 0; w.lat = w.side; place(w); }
+      const rate = stride(w, hz, now, dt, 4.2, 'file', slot);
+      go = Math.min(go, steered.go);
+      animate(w, rate, dt);
     });
+    // The column moves as one. It halts for what its men can't step round, but not for ever: after a few
+    // seconds it presses on, so nobody can hold up a war by standing in the road.
+    press.current = Math.max(0, press.current - dt);
+    halted.current = pace.current < 0.1 && head.current < len ? halted.current + dt : 0;
+    if (halted.current > 4) { halted.current = 0; press.current = 8; }
+    if (press.current > 0) go = 1;
+    pace.current += clampN(go - pace.current, -dt * 3, dt * 1.5);
     if (banner.current) {
       const u = head.current / len;
       curve.getPointAt(u, tmp);

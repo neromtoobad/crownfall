@@ -6,7 +6,7 @@
 // Hild is not scripted: she simulates every throw she could make (weight × line × curl) on the real physics, scores
 // each outcome, and throws the best one with a human hand's error. So she draws, guards and knocks you out as the
 // head calls for it.
-import { useEffect, useMemo, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { audio, burst, noise, voice } from '../realm/sound.ts';
@@ -108,7 +108,7 @@ function simulate(st: Disc[], shot: Disc) {
   hogRule(t);
   return w;
 }
-/** Hild weighs every throw she could make, a few dozen a frame. */
+/** Hild weighs every throw she could make, a few at a time: the round gives her a few milliseconds of it each frame. */
 function* think(st: Disc[], left: number): Generator<undefined, { p: number; aim: number; spin: number; kind: string }> {
   const PS: number[] = [], AS: number[] = [];
   for (let p = 0.18; p <= 0.961; p += 0.04) PS.push(p);
@@ -117,7 +117,7 @@ function* think(st: Disc[], left: number): Generator<undefined, { p: number; aim
   let k = 0;
   for (let si = 0; si < 2; si++) for (let pi = 0; pi < PS.length; pi++) for (let ai = 0; ai < AS.length; ai++) {
     val[si][pi][ai] = judge(simulate(st, launch(HILD, PS[pi], AS[ai], si ? -1 : 1)), HILD, left);
-    if (++k % 30 === 0) yield undefined;
+    if (++k % 6 === 0) yield undefined;
   }
   // A shot is only as good as the throws either side of it: she plays what still works if her hand is a little off.
   let best = { p: 0.45, aim: 0, spin: 1, v: -1e9 };
@@ -240,6 +240,9 @@ function Sheet() {
 }
 
 const RACK = (team: number, k: number): [number, number] => [(team === YOU ? -1 : 1) * (SIDE + 1.6), HACK_Z + 1 + k * 1.35];
+const RACK_ROT = (team: number) => (team === YOU ? 0.4 : -0.4);
+// Where the cards look from and at (the hall's frame); the round's camera hands back to this at the end.
+const VIEW = { pos: [0, 5.5, HACK_Z + 9] as [number, number, number], look: [0, 0, TEE_Z + 4] as [number, number, number] };
 
 function Station() {
   const playing = usePlay().game && session.phase === 'play';
@@ -248,7 +251,7 @@ function Station() {
       <Sheet />
       {!playing && [YOU, HILD].map((t) => Array.from({ length: PER }, (_, k) => {
         const [x, z] = RACK(t, k);
-        return <group key={`${t}${k}`} position={[x, 0, z]} rotation-y={t === YOU ? 0.4 : -0.4}><Stone team={t} setRef={() => undefined} /></group>;
+        return <group key={`${t}${k}`} position={[x, 0, z]} rotation-y={RACK_ROT(t)}><Stone team={t} setRef={() => undefined} /></group>;
       }))}
     </group>
   );
@@ -256,7 +259,9 @@ function Station() {
 
 // ---- The round.
 type Phase = 'aim' | 'charge' | 'slide' | 'think' | 'settle' | 'count' | 'done';
-interface Live extends Disc { id: number; rot: number; thrown: boolean; outT: number }
+/** A stone as drawn. `ox, oz` is how far the drawn stone still is from the physical one (it starts a throw where it
+ *  stood at the hack and catches up in a few frames); `inT` grows a stone back in at the rack; `rx, rz` is its rack. */
+interface Live extends Disc { id: number; rot: number; thrown: boolean; outT: number; ox: number; oz: number; inT: number; rx: number; rz: number }
 interface Mark { x: number; z: number; team: number; shot: boolean }
 const ui = gameUi({
   end: 1, score: [0, 0] as number[], left: [PER, PER] as number[], phase: 'aim' as Phase, turn: YOU, line: '',
@@ -296,20 +301,25 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     sweep: 0, acc: 0, score: [0, 0], fast: false, brain: null as Generator<undefined, { p: number; aim: number; spin: number; kind: string }> | null,
     plan: null as { p: number; aim: number; spin: number; kind: string } | null, shake: 0, lastMarks: 0, pathKey: '',
     finished: false, before: [0, 0],
+    // When Space was last pressed outside your turn, when Hild's plan was made, and small caches for the HUD and sound.
+    spaceAt: -9, planT: 0, seeded: false, marksKey: '', vmax: -1, frostNext: 0,
   });
+  const ringMats = useMemo(() => Array.from({ length: PER * 2 }, () => shotMat.clone()), []);
+  const ringPop = useMemo(() => new Float32Array(PER * 2), []);
   const sound = useRef<ReturnType<typeof rumble>>();
   useEffect(() => { sound.current = rumble(); return () => { const s = sound.current; if (s) { s.g.gain.setTargetAtTime(0, s.a.currentTime, 0.05); s.src.stop(s.a.currentTime + 0.3); } }; }, []);
 
   // A stone for each slot: team YOU ids 0..3, HILD 4..7.
-  const reset = () => {
+  // At the start they stand exactly where the hall's own rack stones stood; between ends they grow back in.
+  const reset = (grow = false) => {
     const s = st.current;
     s.stones = Array.from({ length: PER * 2 }, (_, id) => {
       const team = id < PER ? YOU : HILD, [x, z] = RACK(team, id % PER);
-      return { id, team, x, z, vx: 0, vz: 0, spin: 0, live: false, moving: false, touched: false, rot: team === YOU ? 0.4 : -0.4, thrown: false, outT: -1 };
+      return { id, team, x, z, vx: 0, vz: 0, spin: 0, live: false, moving: false, touched: false, rot: RACK_ROT(team), thrown: false, outT: -1, ox: 0, oz: 0, inT: grow ? 0 : 1, rx: x, rz: z };
     });
     s.thrown = 0; s.cur = null;
   };
-  useMemo(() => { ui.reset(); ui.set({ score: [0, 0], left: [PER, PER], line: 'First stone is yours. Hild has the hammer.', banner: 'End 1' }); reset(); }, []);
+  useMemo(() => { ui.reset(); ui.set({ score: [0, 0], left: [PER, PER], line: 'First stone is yours. Set the line, then hold for weight.', banner: 'End 1' }); reset(); }, []);
 
   // Frost: a pool of particles kicked up by the brooms.
   const frostGeo = useMemo(() => {
@@ -324,11 +334,10 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     vertexShader: 'attribute float aLife; varying float vL; void main(){ vL = aLife; vec4 mv = modelViewMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * mv; gl_PointSize = (2.0 + 5.0 * aLife) * (120.0 / -mv.z); }',
     fragmentShader: 'varying float vL; void main(){ float d = length(gl_PointCoord - 0.5); if (vL <= 0.0) discard; gl_FragColor = vec4(vec3(0.85, 0.93, 1.0) * vL, vL * 0.8 * smoothstep(0.5, 0.0, d)); }',
   }), []);
-  let frostNext = 0;
   const puff = (x: number, z: number, n: number) => {
     const p = frostGeo.getAttribute('position') as THREE.BufferAttribute, l = frostGeo.getAttribute('aLife') as THREE.BufferAttribute;
     for (let i = 0; i < n; i++) {
-      const k = frostNext = (frostNext + 1) % 260;
+      const k = st.current.frostNext = (st.current.frostNext + 1) % 260;
       p.setXYZ(k, x + (Math.random() - 0.5) * 1.3, 0.08, z + (Math.random() - 0.5) * 0.5);
       frostVel.set([(Math.random() - 0.5) * 3, 0.6 + Math.random() * 1.6, (Math.random() - 0.5) * 1.5], k * 3);
       l.setX(k, 1);
@@ -350,7 +359,7 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     pathGeo.setDrawRange(0, n); pos.needsUpdate = true;
   };
 
-  const camPos = useMemo(() => new THREE.Vector3(), []), camLook = useMemo(() => new THREE.Vector3(), []), lookNow = useMemo(() => new THREE.Vector3(room.x, 0.5, room.z + TEE_Z), [room]);
+  const camPos = useMemo(() => new THREE.Vector3(), []), camLook = useMemo(() => new THREE.Vector3(), []), lookNow = useMemo(() => new THREE.Vector3(), []);
   const left = () => { const s = st.current; return [YOU, HILD].map((t) => s.stones.filter((x) => x.team === t && !x.thrown).length); };
 
   const nextThrow = () => {
@@ -369,7 +378,7 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     s.t = 0;
     if (s.turn === YOU) {
       s.phase = 'aim'; s.aim = 0; s.power = 0; s.pathKey = '';
-      ui.set({ phase: 'aim', turn: YOU, left: left(), line: s.thrown >= PER * 2 - 2 ? 'Your last stone.' : 'Your stone.' });
+      ui.set({ phase: 'aim', turn: YOU, left: left(), line: `${s.thrown >= PER * 2 - 2 ? 'Your last stone.' : 'Your stone.'} Set the line, then hold for weight.` });
     } else {
       s.phase = 'think'; s.brain = think(s.stones, PER * 2 - s.thrown); s.plan = null;
       ui.set({ phase: 'think', turn: HILD, left: left(), line: 'Hild studies the head…' });
@@ -379,11 +388,13 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
   const throwStone = (team: number, p: number, aim: number, spin: number) => {
     const s = st.current;
     const stone = s.stones.find((x) => x.team === team && !x.thrown)!;
-    Object.assign(stone, launch(team, p, aim, spin), { thrown: true, outT: -1, rot: 0 });
+    // It is let go from the hack, but drawn from where it stood (just behind it), so it is pushed out, not swapped in.
+    const ox = stone.x, oz = stone.z - HACK_Z;
+    Object.assign(stone, launch(team, p, aim, spin), { thrown: true, outT: -1, ox, oz });
     s.before = [YOU, HILD].map((t) => s.stones.filter((x) => x.team === t && x.thrown && x.live && x !== stone).length);
-    s.cur = stone; s.thrown++; s.phase = 'slide'; s.t = 0; s.sweep = 0; s.fast = false;
+    s.cur = stone; s.thrown++; s.phase = 'slide'; s.t = 0; s.sweep = 0; s.fast = false; s.acc = 0;
     burst(240, 1.5, 0.2, 0.25); burst(1400, 1, 0.05, 0.3, 0.02);
-    ui.set({ phase: 'slide', left: left(), sweep: 0, line: team === YOU ? 'Sweep! Tap Space.' : ui.state.line });
+    ui.set({ phase: 'slide', left: left(), sweep: 0, power: p, line: team === YOU ? 'Sweep to carry it further and straighter.' : ui.state.line });
   };
 
   useFrame(({ clock }, rawDt) => {
@@ -393,32 +404,61 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     const ks = gameKeys();
     if (s.finished) return;
 
+    const T = clock.elapsedTime;
+    // Space pressed just before your turn comes up is remembered for a moment: see the aim, below.
+    if (s.phase !== 'aim' && s.phase !== 'charge' && !(s.phase === 'slide' && s.cur?.team === YOU) && ks.includes(' ')) s.spaceAt = T;
+
     // ---- Your turn: aim, curl, weight.
     if (s.phase === 'aim' || s.phase === 'charge') {
       const steer = (keys.has('d') || keys.has('arrowright') ? 1 : 0) - (keys.has('a') || keys.has('arrowleft') ? 1 : 0);
       s.aim = THREE.MathUtils.clamp(s.aim + steer * dt * (s.phase === 'charge' ? 0.05 : 0.11), -0.1, 0.1);
+      let begin = false;
       for (const k of ks) {
-        if (k === 'w' || k === 'arrowup') s.spin = 1;
-        if (k === 's' || k === 'arrowdown') s.spin = -1;
-        if (k === 'q') s.spin = -1;
-        if (k === ' ' && s.phase === 'aim') { s.phase = 'charge'; s.charge = 0; burst(900, 3, 0.03, 0.2); }
+        if ((k === 'w' || k === 'arrowup') && s.spin !== 1) { s.spin = 1; burst(1500, 3, 0.02, 0.04); }
+        if ((k === 's' || k === 'arrowdown' || k === 'q') && s.spin !== -1) { s.spin = -1; burst(1300, 3, 0.02, 0.04); }
+        if (k === ' ') begin = true;
+      }
+      // Held down a moment early (while the last stone was still being read) counts as held now.
+      if (keys.has(' ') && T - s.spaceAt < 0.45) begin = true;
+      if (begin && s.phase === 'aim') {
+        s.phase = 'charge'; s.charge = 0; s.spaceAt = -9; burst(900, 3, 0.03, 0.2);
+        ui.set({ phase: 'charge', line: 'Let go at the weight you want.' });
       }
       if (s.phase === 'charge') {
         // The meter climbs and falls; let go of Space where you want it.
         s.charge += dt / 1.15;
         const c = s.charge % 2;
         s.power = c < 1 ? c : 2 - c;
-        if (!keys.has(' ')) throwStone(YOU, Math.max(0.02, s.power), s.aim, s.spin);
+        if (!keys.has(' ')) {
+          // A tap is not a throw: let go this early the stone would only be pulled at the hog line, so it stays in hand.
+          if (s.charge < 0.12) { s.phase = 'aim'; s.power = 0; burst(220, 1.4, 0.05, 0.1); ui.set({ phase: 'aim', power: 0, line: 'Hold for weight, then let go to throw.' }); }
+          else throwStone(YOU, Math.max(0.02, s.power), s.aim, s.spin);
+        }
       }
-      const key = `${s.aim.toFixed(4)}${s.spin}`;
-      if (key !== s.pathKey) { s.pathKey = key; drawPath(s.aim, s.spin); }
-      if (Math.abs(ui.state.aim - s.aim) > 1e-4 || ui.state.spin !== s.spin || Math.abs(ui.state.power - s.power) > 0.004) ui.set({ aim: s.aim, spin: s.spin, power: s.power, phase: s.phase });
+      // (The cast: the throw above may have moved the phase on, which the compiler can't see.)
+      if ((s.phase as Phase) !== 'slide') {
+        const key = `${s.aim.toFixed(4)}${s.spin}`;
+        if (key !== s.pathKey) { s.pathKey = key; drawPath(s.aim, s.spin); }
+        if (Math.abs(ui.state.aim - s.aim) > 1e-4 || ui.state.spin !== s.spin || Math.abs(ui.state.power - s.power) > 0.004) ui.set({ aim: s.aim, spin: s.spin, power: s.power, phase: s.phase });
+      }
     }
 
-    // ---- Hild thinks a moment, then throws.
+    // ---- Hild thinks a moment, calls her shot, then throws.
     if (s.phase === 'think') {
-      if (s.brain) { const r = s.brain.next(); if (r.done) { s.plan = r.value; s.brain = null; ui.set({ line: { takeout: 'Hild calls for the takeout.', guard: 'Hild sets a guard.', draw: 'Hild draws to the button.' }[s.plan.kind] ?? '' }); voice('soldier', 10, 0.4, false); } }
-      if (s.plan && s.t > 1.6) {
+      if (s.brain) {
+        // About a thousand throws to weigh. A few milliseconds of them each frame: a slow machine thinks longer
+        // instead of stuttering.
+        const t0 = performance.now();
+        let r = s.brain.next();
+        while (!r.done && performance.now() - t0 < 6) r = s.brain.next();
+        if (r.done) {
+          s.plan = r.value; s.brain = null; s.planT = Math.max(s.t, 0.9);
+          ui.set({ line: { takeout: 'Hild calls for the takeout.', guard: 'Hild sets a guard.', draw: 'Hild draws to the button.' }[s.plan.kind] ?? '' });
+          voice('soldier', 10, 0.4, false);
+        }
+      }
+      // Once she has called it the camera walks back to the hack (below), and she throws when it is there.
+      if (s.plan && s.t > s.planT + 1.2) {
         // A human hand: a little off most of the time, now and then a stone thrown heavy or light.
         const slip = Math.random() < 0.22 ? (Math.random() < 0.5 ? -0.08 : 0.08) : 0;
         throwStone(HILD, THREE.MathUtils.clamp(s.plan.p + gauss() * 0.08 + slip, 0.05, 1), s.plan.aim + gauss() * 0.02, s.plan.spin);
@@ -429,7 +469,7 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     if (s.phase === 'slide') {
       for (const k of ks) {
         if (k === ' ' && s.cur?.team === YOU && s.cur.moving) { s.sweep = Math.min(1, s.sweep + 0.3); shh(); puff(s.cur.x, s.cur.z - 1, 10); }
-        if ((k === 'e' || k === 'enter') && s.cur?.team === HILD) s.fast = true;
+        if ((k === 'e' || k === 'enter') && s.cur?.team === HILD && !s.fast) { s.fast = true; burst(1200, 3, 0.03, 0.1); }
       }
       s.sweep *= Math.exp(-dt * 2.2);
       const scale = s.fast ? 3 : 1;
@@ -440,7 +480,8 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
         moving = step(s.stones, 1 / 120, s.sweep, s.cur, (v) => { crack(v); s.shake = Math.min(0.6, v / 10); }) || moving;
       }
       for (const x of s.stones) if (x.thrown && !x.live && x.outT < 0) x.outT = 0;
-      if (s.cur?.team === YOU) ui.set({ sweep: s.sweep });
+      // The broom's bar only needs telling when it has visibly moved (each `set` redraws the whole HUD).
+      if (s.cur?.team === YOU && Math.abs(ui.state.sweep - s.sweep) > 0.01) ui.set({ sweep: s.sweep });
       if (!moving && s.stones.every((x) => !x.moving)) {
         const cur = s.cur!;
         hogRule(cur);
@@ -454,67 +495,103 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
           what = cur.team === YOU ? (gone > 1 ? 'A double! Two of Hild’s gone.' : 'Cracked hers out!') : (gone > 1 ? 'Hild clears two of yours.' : 'Hild knocks yours out.');
           if (cur.team === YOU) { voice('man', 12, -0.4, true); voice('woman', 10, 0.4, true); }
         }
-        ui.set({ phase: 'settle', line: `${what} ${lie}`.trim() });
+        ui.set({ phase: 'settle', sweep: 0, line: `${what} ${lie}`.trim() });
       }
-    }
-    if (s.phase === 'settle' && s.t > 2.2) nextThrow();
-    if (s.phase === 'count' && s.t > 3.2) {
-      if (s.end >= ENDS) {
-        s.finished = true;
-        const [y, h] = s.score, won = y > h;
-        end({ won, score: y, grade: (y - h) / 4, line: `${y}–${h} after ${ENDS} ends. ${won ? y - h >= 3 ? 'High Marrow has not seen a hand like it.' : 'Hild bows. The ice is yours.' : y === h ? 'Level. The champion keeps the hall’s honour.' : 'Hild keeps the hall’s honour.'}` });
-        return;
+    } else if (s.phase === 'settle' && (s.t > 2.2 || (s.t > 0.7 && (ks.includes('e') || ks.includes('enter'))))) nextThrow();
+    else if (s.phase === 'count') {
+      // The end is read for a while; then the head is cleared and the stones grow back in the racks, so neither the
+      // next end nor the hall (after the last) begins with stones jumping across the ice.
+      if (s.t > 2.6 && s.t - dt <= 2.6) { for (const x of s.stones) if (x.thrown && x.live && x.outT < 0) x.outT = 0; burst(520, 0.8, 0.05, 0.4); }
+      if (s.t > 3.4) {
+        reset(true);
+        if (s.end >= ENDS) { s.phase = 'done'; s.t = 0; }
+        else {
+          s.end++; s.first = s.first === YOU ? HILD : YOU;
+          ui.set({ end: s.end, banner: `End ${s.end}`, left: [PER, PER] });
+          nextThrow();
+        }
       }
-      s.end++; s.first = s.first === YOU ? HILD : YOU; reset();
-      ui.set({ end: s.end, banner: `End ${s.end}`, left: [PER, PER] });
-      nextThrow();
+    } else if (s.phase === 'done' && s.t > 0.9) {
+      // The camera has turned back to where the result card looks from: hand over.
+      s.finished = true;
+      const [y, h] = s.score, won = y > h;
+      end({ won, score: y, grade: (y - h) / 4, line: `${y}–${h} after ${ENDS} ends. ${won ? y - h >= 3 ? 'High Marrow has not seen a hand like it.' : 'Hild bows. The ice is yours.' : y === h ? 'Level. The champion keeps the hall’s honour.' : 'Hild keeps the hall’s honour.'}` });
+      return;
     }
 
     // ---- Draw the stones.
     const c = count(s.stones);
+    // The next stone to go waits at the hack: yours while you aim, Hild's while she thinks.
+    const stageTeam = s.phase === 'aim' || s.phase === 'charge' ? YOU : s.phase === 'think' ? HILD : -1;
+    const staged = stageTeam < 0 ? undefined : s.stones.find((x) => x.team === stageTeam && !x.thrown);
+    const ease = 1 - Math.exp(-dt * 6), catchUp = Math.exp(-dt * 10);
     s.stones.forEach((x, i) => {
       const g = groups.current[i]; if (!g) return;
-      const v = Math.hypot(x.vx, x.vz);
-      if (x.thrown && x.moving) x.rot += x.spin * v * dt * 0.09 + (x.spin ? 0 : 0);
+      if (!x.thrown) {
+        // A waiting stone is furniture (the physics ignores it): it slides between its rack and the hack.
+        const at = x === staged;
+        x.x += ((at ? 0 : x.rx) - x.x) * ease; x.z += ((at ? HACK_Z + 0.9 : x.rz) - x.z) * ease;
+        x.rot += ((at ? 0 : RACK_ROT(x.team)) - x.rot) * ease;
+      } else {
+        if (x.moving) x.rot += x.spin * Math.hypot(x.vx, x.vz) * dt * 0.09;
+        x.ox *= catchUp; x.oz *= catchUp;
+      }
+      x.inT = Math.min(1, x.inT + dt / 0.4);
       if (x.outT >= 0) x.outT += dt;
-      g.visible = !x.thrown || x.outT < 0 || x.outT < 0.8;
-      g.position.set(x.x, x.outT >= 0 ? -Math.min(0.5, x.outT * 0.6) : 0, x.z);
+      g.visible = !x.thrown || x.outT < 0.8;
+      g.position.set(x.x + x.ox, x.outT >= 0 ? -Math.min(0.5, x.outT * 0.6) : 0, x.z + x.oz);
       g.rotation.y = x.rot;
-      const sc = x.outT >= 0 ? Math.max(0.01, 1 - x.outT * 1.2) : 1;
-      g.scale.setScalar(sc);
+      // Out of play it shrinks into the ice; back in the rack it grows in with a small overshoot.
+      const u = x.inT - 1;
+      g.scale.setScalar(x.outT >= 0 ? Math.max(0.01, 1 - x.outT * 1.2) : Math.max(0.01, 1 + 2.4 * u * u * u + 1.4 * u * u));
       const ring = rings.current[i];
       if (ring) {
-        const scoring = c.scoring.includes(x);
-        ring.visible = scoring && (s.phase === 'settle' || s.phase === 'count' || s.phase === 'aim' || s.phase === 'think');
+        const on = c.scoring.includes(x) && x.outT < 0 && (s.phase === 'settle' || s.phase === 'count' || s.phase === 'aim' || s.phase === 'think');
+        // The ring closes in on a counting stone instead of blinking on.
+        ringPop[i] = on ? ringPop[i] + (1 - ringPop[i]) * (1 - Math.exp(-dt * 9)) : 0;
+        ring.visible = on;
         ring.position.set(x.x, 0.04, x.z);
-        (ring.material as THREE.MeshBasicMaterial).opacity = 0.55 + Math.sin(clock.elapsedTime * 5) * 0.3;
+        ring.scale.setScalar(1.6 - 0.6 * ringPop[i]);
+        (ring.material as THREE.MeshBasicMaterial).opacity = (0.55 + Math.sin(T * 5) * 0.3) * ringPop[i];
       }
     });
     // Frost drifts and fades.
     {
       const p = frostGeo.getAttribute('position') as THREE.BufferAttribute, l = frostGeo.getAttribute('aLife') as THREE.BufferAttribute;
+      let any = false;
       for (let i = 0; i < 260; i++) {
         const life = l.getX(i); if (life <= 0) continue;
+        any = true;
         l.setX(i, life - dt * 1.4);
         frostVel[i * 3 + 1] -= dt * 4;
         p.setXYZ(i, p.getX(i) + frostVel[i * 3] * dt, Math.max(0.05, p.getY(i) + frostVel[i * 3 + 1] * dt), p.getZ(i) + frostVel[i * 3 + 2] * dt);
       }
-      p.needsUpdate = true; l.needsUpdate = true;
+      if (any) { p.needsUpdate = true; l.needsUpdate = true; }
     }
     if (path.current) path.current.visible = s.phase === 'aim' || s.phase === 'charge';
-    // The head, for the HUD's map, a few times a second.
-    if (clock.elapsedTime - s.lastMarks > 0.12) {
-      s.lastMarks = clock.elapsedTime;
-      ui.set({ marks: s.stones.filter((x) => x.thrown && x.live).map((x) => ({ x: x.x, z: x.z, team: x.team, shot: c.scoring[0] === x })) });
+    // The head, for the HUD's map, a few times a second, and only when a stone has moved.
+    if (T - s.lastMarks > 0.12) {
+      s.lastMarks = T;
+      let key = '';
+      for (const x of s.stones) if (x.thrown && x.live && x.outT < 0) key += `${x.id}:${x.x.toFixed(1)},${x.z.toFixed(1)}${c.scoring[0] === x ? '*' : ''};`;
+      if (key !== s.marksKey) {
+        s.marksKey = key;
+        ui.set({ marks: s.stones.filter((x) => x.thrown && x.live && x.outT < 0).map((x) => ({ x: x.x, z: x.z, team: x.team, shot: c.scoring[0] === x })) });
+      }
     }
 
     // ---- The rumble under moving stones.
     const snd = sound.current;
     if (snd) {
-      const vmax = Math.max(0, ...s.stones.filter((x) => x.moving).map((x) => Math.hypot(x.vx, x.vz)));
-      snd.g.gain.setTargetAtTime(Math.min(1, vmax / 12) * 0.22, snd.a.currentTime, 0.08);
-      snd.g2.gain.setTargetAtTime(Math.min(1, vmax / 12) * 0.018, snd.a.currentTime, 0.08);
-      snd.lp.frequency.setTargetAtTime(110 + vmax * 14, snd.a.currentTime, 0.1);
+      let vmax = 0;
+      for (const x of s.stones) if (x.moving) vmax = Math.max(vmax, Math.hypot(x.vx, x.vz));
+      // Only retarget the gains when the speed has changed: a still sheet schedules nothing.
+      if (Math.abs(vmax - s.vmax) > 0.05 || (vmax === 0 && s.vmax !== 0)) {
+        s.vmax = vmax;
+        snd.g.gain.setTargetAtTime(Math.min(1, vmax / 12) * 0.22, snd.a.currentTime, 0.08);
+        snd.g2.gain.setTargetAtTime(Math.min(1, vmax / 12) * 0.018, snd.a.currentTime, 0.08);
+        snd.lp.frequency.setTargetAtTime(110 + vmax * 14, snd.a.currentTime, 0.1);
+      }
     }
 
     // ---- The camera.
@@ -525,8 +602,12 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
       camPos.set(X - Math.sin(s.aim) * 6, 3.4, Z + HACK_Z + 6.5);
       camLook.set(X + Math.tan(s.aim) * (HACK_Z - TEE_Z), 0.2, Z + TEE_Z + 2);
       fov = 34;
-    } else if (s.phase === 'think') {
+    } else if (s.phase === 'think' && !(s.plan && s.t > s.planT)) {
       camPos.set(X, 9, Z + TEE_Z + 10.5); camLook.set(X, 0, Z + TEE_Z - 0.5); fov = 46;
+    } else if (s.phase === 'think') {
+      // She has called her shot: back behind the hack, exactly where the ride with her stone starts, so the throw
+      // doesn't whip the camera the length of the sheet and back.
+      camPos.set(X, 3.6, Z + HACK_Z + 7.5); camLook.set(X, 0.3, Z + HACK_Z - 6); fov = 48;
     } else if (s.phase === 'slide' && s.cur) {
       // Ride with the stone; as it reaches the house, rise to look down into it.
       const near = THREE.MathUtils.smoothstep(s.cur.z, TEE_Z + 14, TEE_Z + 26);
@@ -534,18 +615,23 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
       camPos.set(fx * near + X * (1 - near), 3.6 * near + 9.5 * (1 - near), (fz + 7.5) * near + (Z + TEE_Z + 8.5) * (1 - near));
       camLook.set(fx * near + X * (1 - near), 0.3, (fz - 6) * near + (Z + TEE_Z) * (1 - near));
       fov = 48;
+    } else if (s.phase === 'done') {
+      // Turn back to where the result card looks from, so the card's camera takes over without a jump.
+      camPos.set(X + VIEW.pos[0], VIEW.pos[1], Z + VIEW.pos[2]); camLook.set(X + VIEW.look[0], VIEW.look[1], Z + VIEW.look[2]);
     } else {
       // Top-down over the house while the head is read.
       camPos.set(X, 15.5, Z + TEE_Z + 5.5); camLook.set(X, 0, Z + TEE_Z - 0.4); fov = 46;
     }
-    const k = 1 - Math.exp(-dt * (s.phase === 'slide' ? 3.2 : 2.6));
+    // The look starts from wherever the card's camera was looking.
+    if (!s.seeded) { s.seeded = true; camera.getWorldDirection(lookNow).multiplyScalar(camera.position.distanceTo(camLook)).add(camera.position); }
+    const k = 1 - Math.exp(-dt * (s.phase === 'slide' || s.phase === 'done' ? 3.2 : 2.6));
     camera.position.lerp(camPos, k);
     lookNow.lerp(camLook, k);
     camera.lookAt(lookNow);
     const pc = camera as THREE.PerspectiveCamera;
     if (Math.abs(pc.fov - fov) > 0.05) { pc.fov += (fov - pc.fov) * k; pc.updateProjectionMatrix(); }
     s.shake = Math.max(0, s.shake - dt);
-    if (s.shake > 0) { camera.rotateZ(Math.sin(clock.elapsedTime * 47) * s.shake * 0.025); camera.rotateX(Math.sin(clock.elapsedTime * 31) * s.shake * 0.012); }
+    if (s.shake > 0) { camera.rotateZ(Math.sin(T * 47) * s.shake * 0.025); camera.rotateX(Math.sin(T * 31) * s.shake * 0.012); }
   });
 
   if (import.meta.env.DEV) Object.assign(window, { __stones: { st: st.current, ui: ui.state, count: () => count(st.current.stones) } });
@@ -555,7 +641,7 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
   return (
     <group>
       {Array.from({ length: PER * 2 }, (_, i) => <Stone key={i} team={i < PER ? YOU : HILD} setRef={(g) => { groups.current[i] = g; }} />)}
-      {Array.from({ length: PER * 2 }, (_, i) => <mesh key={`r${i}`} ref={(m) => { rings.current[i] = m; }} geometry={ringGeo} material={shotMat.clone()} visible={false} />)}
+      {Array.from({ length: PER * 2 }, (_, i) => <mesh key={`r${i}`} ref={(m) => { rings.current[i] = m; }} geometry={ringGeo} material={ringMats[i]} visible={false} />)}
       <points ref={path} geometry={pathGeo} material={pathMat} frustumCulled={false} />
       <points ref={frost} geometry={frostGeo} material={frostMat} frustumCulled={false} />
     </group>
@@ -563,7 +649,8 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
 }
 
 // ---- The HUD: the scoreboard, the stones left, the head from above, and the weight meter.
-function HouseMap({ marks }: { marks: Mark[] }) {
+// Memoised: the meter and the broom's bar redraw the HUD every frame, the map only when a stone has moved.
+const HouseMap = memo(function HouseMap({ marks }: { marks: Mark[] }) {
   // Map the house and the guard zone in front of it: z from TEE_Z−5 to HOG_Z, x ±SIDE.
   const Z0 = BACK_Z - 0.6, Z1 = HOG_Z + 0.6, Wd = 2 * SIDE, H = Z1 - Z0, S = 150 / Wd;
   const px = (x: number) => (x + SIDE) * S, pz = (z: number) => (z - Z0) * S;
@@ -582,7 +669,7 @@ function HouseMap({ marks }: { marks: Mark[] }) {
       ))}
     </svg>
   );
-}
+});
 
 function Hud() {
   const s = ui.use();
@@ -611,9 +698,10 @@ function Hud() {
         {s.phase === 'slide' && s.turn === YOU && <div className="st-sweep"><span style={{ width: `${s.sweep * 100}%` }} /></div>}
         <div className="line">{s.line}</div>
         {s.phase === 'aim' && <div className="hint"><kbd>A</kbd><kbd>D</kbd> line · <kbd>W</kbd><kbd>S</kbd> curl {s.spin > 0 ? '↻ right' : '↺ left'} · hold <kbd>Space</kbd> for weight</div>}
-        {s.phase === 'charge' && <div className="hint">let go of <kbd>Space</kbd> at the weight you want</div>}
+        {s.phase === 'charge' && <div className="hint">the bar shows where it stops on clean ice · let go of <kbd>Space</kbd> to throw</div>}
         {s.phase === 'slide' && s.turn === YOU && <div className="hint">tap <kbd>Space</kbd> to sweep: further and straighter</div>}
         {s.phase === 'slide' && s.turn === HILD && <div className="hint"><kbd>E</kbd> hurry it along</div>}
+        {s.phase === 'settle' && <div className="hint"><kbd>E</kbd> next stone</div>}
       </div>
     </>
   );
@@ -622,8 +710,8 @@ function Hud() {
 register({
   id: 'stones', name: 'Ice Stones',
   pitch: 'Curling on the frozen floor of High Marrow, against the house champion, Hild. Two ends, four stones each. The stones nearest the button score. Sweep to carry a stone further and straighter.',
-  keys: [['A D', 'line'], ['W S', 'curl'], ['Space', 'hold for weight, tap to sweep'], ['Esc', 'leave']],
+  keys: [['A D or ← →', 'line'], ['W S or ↑ ↓', 'curl'], ['Space', 'hold for weight, tap to sweep'], ['E', 'hurry along'], ['Esc', 'leave']],
   entry: 500,
   Station, Play, Hud,
-  view: () => ({ pos: [0, 5.5, HACK_Z + 9], look: [0, 0, TEE_Z + 4] }),
+  view: () => VIEW,
 });

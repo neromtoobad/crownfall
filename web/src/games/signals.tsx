@@ -152,6 +152,10 @@ const STATION: [number, number] = [0, -12]; // rooms.ts
 const LAMP_COLORS = ['#ff4b3a', '#39f08a', '#4bb6ff', '#ffc23a'];
 const LAMP_NAMES = ['red', 'green', 'blue', 'amber'];
 const WIN = 6, MAX_SHIPS = 8, MAX_WRECKS = 3;
+// Colours parsed once: the frame loop copies these instead of parsing a hex string several times a frame.
+const LAMP_RGB = LAMP_COLORS.map((c) => new THREE.Color(c));
+const LANTERN = new THREE.Color('#ffd38a'), DARK = new THREE.Color('#2a2018'), AFIRE = new THREE.Color('#ff6a3a');
+const FOAM = new THREE.Color('#f4efe6'), FOAM_DIM = new THREE.Color('#e9e4dc');
 const NAMES = ['the Grey Gull', 'the Heron’s Wing', 'the Salt Widow', 'the Lantern Maid', 'the Cold Tide', 'the Silver Eel', 'the Long Patience', 'the Fair Return', 'the Black Swan', 'the Old Debt', 'the Night Herring'];
 
 // A brass lantern on an iron post: plinth, post, bracket, cage, coloured glass, cap. Built around its glass centre.
@@ -245,6 +249,8 @@ interface Ship {
   g: THREE.Group; lantern: THREE.MeshBasicMaterial; halo: THREE.Sprite; streak: THREE.Mesh; wake: THREE.Mesh;
   state: 'idle' | 'in' | 'signal' | 'home' | 'moored' | 'wreck' | 'sunk';
   t: number; from: THREE.Vector3; to: THREE.Vector3; pos: THREE.Vector3; heading: number; roll: number; sink: number; seed: number; slot: number; name: string;
+  /** The lantern halo's size now and the size it is easing to; the run home's length, and its route when it is not a straight line. */
+  hs: number; hsT: number; dur: number; path?: THREE.CatmullRomCurve3;
 }
 function makeShip(seed: number, name: string): Ship {
   const g = new THREE.Group();
@@ -287,8 +293,10 @@ function makeShip(seed: number, name: string): Ship {
   streak.rotation.x = -Math.PI / 2;
   const wake = new THREE.Mesh(new THREE.PlaneGeometry(26, 9), new THREE.MeshBasicMaterial({ color: '#fff4e2', map: halo(), transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
   wake.rotation.x = -Math.PI / 2;
-  g.visible = false;
-  return { g, lantern, halo: haloS, streak, wake, state: 'idle', t: 0, from: new THREE.Vector3(), to: new THREE.Vector3(), pos: new THREE.Vector3(), heading: 0, roll: 0, sink: 0, seed, slot: -1, name };
+  // The streak and wake are mounted beside the ship, not inside it, so they must be hidden with it: until she sails
+  // they sat lit on the hall floor at the room's origin.
+  g.visible = streak.visible = wake.visible = false;
+  return { g, lantern, halo: haloS, streak, wake, state: 'idle', t: 0, from: new THREE.Vector3(), to: new THREE.Vector3(), pos: new THREE.Vector3(), heading: 0, roll: 0, sink: 0, seed, slot: -1, name, hs: 9, hsT: 9, dur: 5 };
 }
 
 // ---- The tower top: where the round is played (west of the hall, over the sea).
@@ -299,7 +307,10 @@ const ROCKS: [number, number, number][] = [[-178, -52, 7], [-196, -38, 5], [-160
 const LIGHTHOUSE = new THREE.Vector3(-360, 0, 135);
 
 type Phase = 'sail' | 'watch' | 'answer' | 'home' | 'wreck' | 'done';
-const ui = gameUi({ saved: 0, wrecks: 0, phase: 'sail' as Phase, line: 'A sail on the horizon…', len: 3, got: [] as number[], timer: 1, ship: '' });
+const ui = gameUi({ saved: 0, wrecks: 0, phase: 'sail' as Phase, line: 'A sail on the horizon…', len: 3, got: [] as number[], ship: '' });
+// The answer timer's bar. The round writes its width straight to this element every frame, so the HUD does not have
+// to re-render sixty times a second for one moving bar.
+let timerEl: HTMLSpanElement | null = null;
 
 function Tower() {
   const blocks = useMemo(() => {
@@ -383,11 +394,21 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
   const st = useRef({
     phase: 'sail' as Phase, t: 0, cur: -1, used: 0, saved: 0, wrecks: 0,
     seq: [] as number[], got: [] as number[], show: 0, idle: 0, lampT: [0, 0, 0, 0], lastLamp: 0, shake: 0, ended: false, fov: 48,
-    look: LOOK.clone(), echo: -1, echoT: 0, placed: false,
+    look: LOOK.clone(), echo: -1, echoT: 0, placed: false, warn: 9, early: false, shipI: 160,
   });
   useMemo(() => { ui.reset(); }, []);
   if (import.meta.env.DEV) Object.assign(window, { __sig: { st, press: (i: number) => press(i) } });
-  const tmp = useMemo(() => new THREE.Vector3(), []);
+  const tmp = useMemo(() => new THREE.Vector3(), []), tmp2 = useMemo(() => new THREE.Vector3(), []);
+  // A round builds eleven ships of its own; without this, every round played left their geometry and materials on the GPU.
+  useEffect(() => () => {
+    for (const x of ships) for (const o of [x.g, x.streak, x.wake]) o.traverse((m) => {
+      const mesh = m as THREE.Mesh;
+      if (!(m as THREE.Sprite).isSprite) mesh.geometry?.dispose(); // every sprite in the app shares one quad
+      (mesh.material as THREE.Material | undefined)?.dispose();
+    });
+    for (const p of [sparks, spray]) { p.geo.dispose(); (p.points.material as THREE.Material).dispose(); }
+    glasses.forEach((g) => g.dispose());
+  }, [ships, sparks, spray, glasses]);
   const camPos = useMemo(() => new THREE.Vector3(), []), lookW = useMemo(() => new THREE.Vector3(), []);
 
   const len = (saved: number) => 3 + Math.floor(saved * 0.75);
@@ -398,23 +419,43 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     const s = st.current;
     const sh = ships[s.used++];
     s.cur = s.used - 1;
-    sh.state = 'in'; sh.t = 0; sh.g.visible = true;
+    sh.state = 'in'; sh.t = 0; sh.g.visible = sh.streak.visible = sh.wake.visible = true;
     sh.from.set(-520, 0, TZ - 70 + Math.random() * 120);
     sh.to.set(-140 + (Math.random() - 0.5) * 20, 0, TZ + (Math.random() - 0.5) * 44);
     sh.pos.copy(sh.from);
     s.seq = Array.from({ length: len(s.saved) }, () => Math.floor(Math.random() * 4));
-    s.got = []; s.phase = 'sail'; s.t = 0;
-    ui.set({ phase: 'sail', line: `${cap(sh.name)} stands in toward the Teeth…`, len: s.seq.length, got: [], ship: sh.name, timer: 1 });
+    s.got = []; s.phase = 'sail'; s.t = 0; s.early = false;
+    ui.set({ phase: 'sail', line: `${cap(sh.name)} stands in toward the Teeth…`, len: s.seq.length, got: [], ship: sh.name });
+  }
+  function openAnswer() {
+    const s = st.current, sh = ships[s.cur];
+    s.phase = 'answer'; s.idle = 0; s.warn = 9;
+    sh.lantern.color.copy(LANTERN); (sh.halo.material as THREE.SpriteMaterial).color.copy(LANTERN); (sh.streak.material as THREE.MeshBasicMaterial).color.copy(LANTERN); sh.hsT = 9;
+    ui.set({ phase: 'answer', line: 'Answer her. Repeat her colours in order.' });
   }
   function press(i: number) {
     const s = st.current;
+    if (s.ended) return;
+    if (s.phase === 'watch') {
+      // Her last flash has gone dark: an answer begun in that gap counts. It used to ring the lamp and then be thrown
+      // away, so the next press was judged as the first and wrecked her. While she is still signalling the lamp only
+      // glows and sounds faintly, so it reads as "not yet" and does not drown her own bell.
+      const on = flashOn(s.saved);
+      if (s.t >= (s.seq.length - 1) * on * 1.45 + on) openAnswer();
+      else {
+        s.lampT[i] = Math.max(s.lampT[i], 0.3); s.lastLamp = i;
+        bell(NOTES[i], 0.035, 0.5, 0, 0.7);
+        if (!s.early) { s.early = true; ui.set({ line: 'Wait. She has not finished.' }); }
+        return;
+      }
+    }
     s.lampT[i] = 1; s.lastLamp = i;
     bell(NOTES[i], 0.1);
-    sparks.emit(tmp.set(LAMP_X, TOP_Y + 3.6, lampZ(i)), 14, new THREE.Color(LAMP_COLORS[i]), 6, 1.2, 1.1, 0.6);
+    sparks.emit(tmp.set(LAMP_X, TOP_Y + 3.6, lampZ(i)), 14, LAMP_RGB[i], 6, 1.2, 1.1, 0.6);
     if (s.phase !== 'answer') return;
     const want = s.seq[s.got.length];
-    s.idle = 0;
-    if (i !== want) { founder(`${LAMP_NAMES[i]} was wrong: she wanted ${LAMP_NAMES[want]}.`); return; }
+    s.idle = 0; s.warn = 9;
+    if (i !== want) { founder(`${cap(LAMP_NAMES[i])} was wrong: she wanted ${LAMP_NAMES[want]}.`); return; }
     s.got.push(i);
     s.echo = i; s.echoT = 0.35;
     ui.set({ got: [...s.got] });
@@ -423,6 +464,13 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
       s.saved++; s.phase = 'home'; s.t = 0;
       sh.state = 'home'; sh.t = 0; sh.from.copy(sh.pos); sh.slot = s.saved - 1;
       sh.to.set(-172 - sh.slot * 17, 0, 44 + (sh.slot % 2) * 8);
+      // A straight run in crossed the bow of the ship moored just before her, and past the fourth berth it went
+      // through two of the Teeth. Every ship after the first rounds the back of the moored line instead and noses
+      // in from the far side, at the same pace however far down the line her berth is.
+      if (sh.slot >= 1) {
+        sh.path = new THREE.CatmullRomCurve3([sh.from.clone(), new THREE.Vector3(-160, 0, 61), new THREE.Vector3(sh.to.x + 12, 0, 72), sh.to.clone()], false, 'centripetal');
+        sh.dur = Math.max(5, sh.path.getLength() / 34);
+      }
       [0, 2, 4, 7].forEach((k, n) => bell(NOTES[0] * 2 ** (k / 12) * 1.5, 0.07, 1.6, n * 0.09));
       voice('man', 20, -0.5, true); voice('woman', 14, 0.4, true);
       s.shake = 0.25;
@@ -437,6 +485,7 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     for (const r of ROCKS) { const d = Math.hypot(r[0] - sh.pos.x, r[1] - sh.pos.z); if (d < bd) { bd = d; best = r; } }
     sh.to.set(best[0] + 6, 0, best[1] + 6);
     burst(220, 2, 0.08, 0.6); voice('man', 16, 0, true);
+    s.shake = Math.max(s.shake, 0.3); // a jolt at the moment of the mistake; the big one comes when she strikes
     ui.set({ phase: 'wreck', wrecks: s.wrecks, line: `${why} ${cap(sh.name)} is running onto the Teeth!` });
   }
 
@@ -445,30 +494,30 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     const s = st.current;
     s.t += dt;
     for (const k of gameKeys()) {
-      const i = ['1', '2', '3', '4'].indexOf(k) >= 0 ? ['1', '2', '3', '4'].indexOf(k) : ['a', 's', 'd', 'f'].indexOf(k);
+      const i = k.length === 1 ? Math.max('1234'.indexOf(k), 'asdf'.indexOf(k)) : -1;
       if (i >= 0) press(i);
     }
     if (s.cur < 0 && !s.ended) launch();
     const sh = s.cur >= 0 ? ships[s.cur] : undefined;
     // ---- The round's beats.
     if (s.phase === 'sail' && sh) {
-      if (sh.state === 'signal') { s.phase = 'watch'; s.t = -0.6; s.show = -1; ui.set({ phase: 'watch', line: 'Watch her lantern.' }); }
+      if (sh.state === 'signal') { s.phase = 'watch'; s.t = -0.6; s.show = -1; ui.set({ phase: 'watch', line: `Watch her lantern. ${s.seq.length} flashes.` }); }
     } else if (s.phase === 'watch' && sh) {
       const on = flashOn(s.saved), off = on * 0.45, k = Math.floor(s.t / (on + off));
       const inOn = s.t >= 0 && s.t % (on + off) < on;
       if (s.t >= 0 && k < s.seq.length && inOn && s.show !== k) { s.show = k; bell(NOTES[s.seq[k]] / 2, 0.07, 1, 0, 0.6); }
-      const c = s.t >= 0 && k < s.seq.length && inOn ? LAMP_COLORS[s.seq[k]] : '#2a2018';
-      sh.lantern.color.set(c); (sh.halo.material as THREE.SpriteMaterial).color.set(c); (sh.streak.material as THREE.MeshBasicMaterial).color.set(c);
-      sh.halo.scale.setScalar(inOn ? 24 : 4);
-      if (k >= s.seq.length) {
-        s.phase = 'answer'; s.idle = 0;
-        sh.lantern.color.set('#ffd38a'); (sh.halo.material as THREE.SpriteMaterial).color.set('#ffd38a'); (sh.streak.material as THREE.MeshBasicMaterial).color.set('#ffd38a'); sh.halo.scale.setScalar(9);
-        ui.set({ phase: 'answer', line: 'Answer her.' });
-      }
+      const lit = s.t >= 0 && k < s.seq.length && inOn, c = lit ? LAMP_RGB[s.seq[k]] : DARK;
+      // The colour cuts on and off so each flash stays distinct; only the halo's size eases (in the ship loop below).
+      sh.lantern.color.copy(c); (sh.halo.material as THREE.SpriteMaterial).color.copy(c); (sh.streak.material as THREE.MeshBasicMaterial).color.copy(c);
+      sh.hsT = lit ? 24 : 4;
+      if (k >= s.seq.length) openAnswer();
     } else if (s.phase === 'answer') {
       s.idle += dt;
-      const w = answerWindow(s.saved);
-      ui.set({ timer: Math.max(0, 1 - s.idle / w) });
+      const w = answerWindow(s.saved), left = Math.max(0, 1 - s.idle / w);
+      if (timerEl) timerEl.style.transform = `scaleX(${left.toFixed(3)})`;
+      // Three quiet ticks as the last third of the time for this lamp runs out.
+      const step = Math.ceil(left * 9);
+      if (step !== s.warn) { if (step < s.warn && step >= 1 && step <= 3) burst(1500, 14, 0.035, 0.04); s.warn = step; }
       if (s.idle > w) founder('Too slow on the lamps.');
     } else if ((s.phase === 'home' || s.phase === 'wreck') && s.t > 3.4) {
       if (s.saved >= MAX_SHIPS || s.wrecks >= MAX_WRECKS) {
@@ -482,9 +531,9 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     // Echo: the ship blinks back each lamp you get right.
     if (sh && s.echoT > 0) {
       s.echoT -= dt;
-      const c = s.echoT > 0 ? LAMP_COLORS[s.echo] : '#ffd38a';
-      sh.lantern.color.set(c); (sh.halo.material as THREE.SpriteMaterial).color.set(c);
-      sh.halo.scale.setScalar(s.echoT > 0 ? 13 : 9);
+      const c = s.echoT > 0 ? LAMP_RGB[s.echo] : LANTERN;
+      sh.lantern.color.copy(c); (sh.halo.material as THREE.SpriteMaterial).color.copy(c);
+      sh.hsT = s.echoT > 0 ? 13 : 9;
     }
     // ---- Ships move.
     for (const x of ships) {
@@ -497,8 +546,9 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
         x.pos.lerpVectors(x.from, x.to, e); speed = 1 - u;
         if (u >= 1) x.state = 'signal';
       } else if (x.state === 'home') {
-        const u = Math.min(1, x.t / 5), e = u * u * (3 - 2 * u);
-        x.pos.lerpVectors(x.from, x.to, e); speed = Math.sin(u * Math.PI);
+        const u = Math.min(1, x.t / x.dur), e = u * u * (3 - 2 * u);
+        if (x.path) x.path.getPointAt(e, x.pos); else x.pos.lerpVectors(x.from, x.to, e);
+        speed = Math.sin(u * Math.PI);
         if (u >= 1) x.state = 'moored';
       } else if (x.state === 'wreck') {
         const u = Math.min(1, x.t / 1.8);
@@ -506,23 +556,23 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
         else {
           if (x.sink === 0) {
             boom(); creak(); s.shake = 1;
-            spray.emit(new THREE.Vector3(x.pos.x, 2, x.pos.z), 160, new THREE.Color('#f4efe6'), 22, 0.4, 3.2, 1.6);
-            x.lantern.color.set('#ff6a3a');
+            spray.emit(tmp2.set(x.pos.x, 2, x.pos.z), 160, FOAM, 22, 0.4, 3.2, 1.6);
+            x.lantern.color.copy(AFIRE);
           }
           x.sink = Math.min(1, x.sink + dt / 3.2);
           x.roll = 0.3 + x.sink * 1.1;
-          if (Math.random() < dt * 12) spray.emit(new THREE.Vector3(x.pos.x + (Math.random() - 0.5) * 14, 0, x.pos.z + (Math.random() - 0.5) * 6), 6, new THREE.Color('#e9e4dc'), 8, 0.6, 2.4, 1);
+          if (Math.random() < dt * 12) spray.emit(tmp2.set(x.pos.x + (Math.random() - 0.5) * 14, 0, x.pos.z + (Math.random() - 0.5) * 6), 6, FOAM_DIM, 8, 0.6, 2.4, 1);
           if (x.sink >= 1) { x.state = 'sunk'; x.g.visible = false; }
         }
       }
       const dx = x.pos.x - prev.x, dz = x.pos.z - prev.z;
       if (Math.hypot(dx, dz) > 1e-4) {
         let want = Math.atan2(-dz, dx), d = want - x.heading; d = Math.atan2(Math.sin(d), Math.cos(d));
-        x.heading += d * Math.min(1, dt * 2.5); want = 0; void want;
+        x.heading += d * (1 - Math.exp(-dt * 2.5)); want = 0; void want;
       } else if (x.state === 'signal' || x.state === 'moored') {
         // Lie broadside to the tower so her lantern shows.
         let d = (x.state === 'moored' ? Math.PI - 0.5 : Math.PI / 2 - 0.35) - x.heading; d = Math.atan2(Math.sin(d), Math.cos(d));
-        x.heading += d * Math.min(1, dt * 0.8);
+        x.heading += d * (1 - Math.exp(-dt * 0.8));
       }
       const bob = Math.sin(now * 1.1 + x.seed) * 0.35;
       x.g.position.set(x.pos.x, -0.6 + bob - x.sink * 14, x.pos.z);
@@ -532,12 +582,14 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
       (x.wake.material as THREE.MeshBasicMaterial).opacity = speed * 0.35;
       x.wake.position.set(x.g.position.x - Math.cos(x.heading) * 6, -0.8, x.g.position.z + Math.sin(x.heading) * 6);
       x.wake.rotation.z = x.heading;
-      if (x.state === 'moored') { x.lantern.color.set('#ffd38a'); x.halo.scale.setScalar(8 + Math.sin(now * 2 + x.seed) * 0.6); }
+      if (x.state === 'moored') { x.lantern.color.copy(LANTERN); x.hsT = 8 + Math.sin(now * 2 + x.seed) * 0.6; }
+      x.hs += (x.hsT - x.hs) * (1 - Math.exp(-dt * 26));
+      x.halo.scale.setScalar(x.hs);
     }
     // The current ship lights the water round her.
     if (shipLight.current) {
       const l = shipLight.current;
-      if (sh && sh.g.visible && sh.state !== 'sunk') { l.visible = true; l.position.set(sh.g.position.x - Math.cos(sh.heading) * 10.6, 8, sh.g.position.z + Math.sin(sh.heading) * 10.6); l.color.copy(sh.lantern.color); l.intensity = s.phase === 'watch' ? 420 : 160; }
+      if (sh && sh.g.visible && sh.state !== 'sunk') { l.visible = true; l.position.set(sh.g.position.x - Math.cos(sh.heading) * 10.6, 8, sh.g.position.z + Math.sin(sh.heading) * 10.6); l.color.copy(sh.lantern.color); s.shipI += ((s.phase === 'watch' ? 420 : 160) - s.shipI) * (1 - Math.exp(-dt * 6)); l.intensity = s.shipI; }
       else l.visible = false;
     }
     // ---- Lamps: a flare that fades, a light that jumps to the lamp you pressed; the next-wanted lamp is never hinted.
@@ -551,7 +603,7 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     if (flash.current) {
       const k = s.lampT[s.lastLamp];
       flash.current.intensity = k * 220;
-      flash.current.color.set(LAMP_COLORS[s.lastLamp]);
+      flash.current.color.copy(LAMP_RGB[s.lastLamp]);
       flash.current.position.set(LAMP_X, TOP_Y + 4.2, lampZ(s.lastLamp));
     }
     if (beam.current) beam.current.rotation.y = now * 0.45;
@@ -611,7 +663,7 @@ function Hud() {
       {(s.phase === 'answer' || s.phase === 'home') && (
         <div className="sig-seq">{Array.from({ length: s.len }, (_, i) => <i key={i} style={i < s.got.length ? { background: LAMP_COLORS[s.got[i]], boxShadow: `0 0 12px ${LAMP_COLORS[s.got[i]]}` } : undefined} />)}</div>
       )}
-      {s.phase === 'answer' && <div className="sig-timer"><span style={{ transform: `scaleX(${s.timer})` }} /></div>}
+      {s.phase === 'answer' && <div className="sig-timer"><span ref={(el) => { timerEl = el; }} /></div>}
       <div className="hint sig-keys">{LAMP_COLORS.map((c, i) => <span key={i}><kbd>{i + 1}</kbd><em style={{ background: c }} /></span>)}<span className="or">or A S D F</span></div>
     </div>
   );
@@ -620,7 +672,7 @@ function Hud() {
 register({
   id: 'signals', name: 'Lantern Signals',
   pitch: 'Ships stand off the Teeth at dusk and flash a lantern sequence. Answer it on the tower’s four lamps to bring each one in. Every ship asks for more. Six home to win; three wrecks and you’re done.',
-  keys: [['1 2 3 4', 'the lamps (or A S D F, or click)'], ['Esc', 'leave']],
+  keys: [['1 2 3 4', 'the lamps, left to right (A S D F or a click also work)'], ['Esc', 'leave']],
   entry: 400,
   Station, Play, Hud,
   view: () => ({ pos: [STATION[0], 6.4, STATION[1] + 9], look: [STATION[0], 2.6, STATION[1]] }),
