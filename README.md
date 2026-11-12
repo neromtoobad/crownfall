@@ -10,6 +10,8 @@
   <a href="#run-it">Run it</a>
 </p>
 
+<p align="center"><a href="https://github.com/neromtoobad/crownfall/actions/workflows/contract.yml"><img src="https://github.com/neromtoobad/crownfall/actions/workflows/contract.yml/badge.svg" alt="contract tests"></a> <b>52 contract tests</b> run on every push to <code>chain/</code></p>
+
 <p align="center"><img src="docs/shots/01-realm.jpg" alt="The realm of Vael from above: eight keeps around a river valley, the capital in the middle" width="100%"></p>
 
 Ride a chariot across Vael, walk into any house's hall and play its game, back a team at the Hippodrome, and earn the

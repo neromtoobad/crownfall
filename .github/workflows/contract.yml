@@ -1,0 +1,24 @@
+name: contract tests
+
+on:
+  push:
+    paths: ['chain/**', '.github/workflows/contract.yml']
+  pull_request:
+    paths: ['chain/**']
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: chain
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: chain
+      # 52 tests: the market rule, hall rounds and burns, races (including the Rust race matching the browser's,
+      # bit for bit), bets, seals, seasons and the crown, NEP-245 transfers.
+      - run: cargo test --release
