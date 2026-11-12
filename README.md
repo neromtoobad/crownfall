@@ -14,7 +14,8 @@
 
 Ride a chariot across Vael, walk into any house's hall and play its game, back a team at the Hippodrome, and earn the
 seven seals that put you on the Ashen Throne. Every round you play burns that house's coin on NEAR, so playing is what
-moves the price.
+moves the price. Each house is a merchant: a rush of buying makes its coin dear, a flood of selling makes it cheap,
+and a run on a house shuts its hall until its players buy back in.
 
 - **Play:** https://crownfall.nerom.site. It runs on NEAR testnet. Sign in with Google or just a name and the realm
   makes you a real NEAR account: no wallet, no seed phrase, no popups.
@@ -46,11 +47,11 @@ testnet; you can watch them land on
 |---|---|
 | **1.** Open https://crownfall.nerom.site | The realm of Vael from above: eight keeps, the capital, and a live race card bottom left. |
 | **2.** Press **Sign in & take your seat**, then **Sign in**: **Continue with Google**, or type a name and press **Make my lord**. Pick a house, a lord and a name, press **Enter** | A few seconds later you're a real account on NEAR testnet (`ada-x7k2.vael.testnet`, or `ada.vael.testnet` for a name), shown in the pill top left. You land in the capital, Emberfall. (With a wallet instead, it asks once to add a game key: a function-call key limited to this contract with a 0.5 NEAR gas allowance.) |
-| **3.** Walk to the Mint just ahead (the counter with the big coin) and press **E**: **Trade** | The eight house coins with price, supply, reserve and coin burned, read from the contract. |
+| **3.** Walk to the Mint just ahead (the counter with the big coin) and press **E**: **Trade** | The eight house coins with buy and sell price, supply, reserve and coin burned, read from the contract. Press **Why this price?** under a coin for the merchant's reasons in plain words, and **▶▶ Fast-forward a week** to watch a simulated week of traders, whales and runs under the same rule in a few seconds. |
 | **4.** Pick a house's coin, type `0.1`, press **Buy with 0.1 NEAR** | `buy` signs right there, with no popup (a wallet would ask). The coin lands in your purse (top right), and the pill top left shows **✓ … on NEAR**, linked to the transaction. |
 | **5.** Press **M** for the map and tap that house's keep to set a waypoint. Press **C** to whistle for your chariot and **E** to take the reins | The radar draws the road route to the keep. **W** to drive, **A**/**D** to steer, **Space** to whip. |
 | **6.** At the keep's lit door press **E** (**Enter**), walk to the table, press **E** (**Play**), then **Play** on the card | No popup: `enter` is signed in the browser, and it burns 400 of that house's coin. Back at the Mint, that coin's burned count has gone up, and its price with it. |
-| **7.** Play the round (each game shows its controls) | The result is reported with `finish`. The burn was already your favour with the house; a win marks the hall won for the Wardens' seals and goes on the house's tally of wins. (In Qureshi's Library the contract rolls the dice and decides the win itself: see [What happens on NEAR](#what-happens-on-near).) |
+| **7.** Play the round (each game shows its controls) | The round closes with `finish`. The burn was already your favour with the house; a win marks the hall won for the Wardens' seals and goes on the house's tally of wins. In the Vintner's Cups (Vinehold) and Lantern Signals (Greywater) the contract judges the win itself: it rolled the round's seed at `enter`, and replays your moves against it. In Qureshi's Library it rolls the dice and settles the bet. See [What happens on NEAR](#what-happens-on-near). |
 | **8.** Drive to the Mumtaz Hippodrome (**H** on the radar). At the stables press **E** (**Race**), then **Watch and bet on NEAR**. While the teams parade, choose a stake and press **Back** on one | `bet` puts your NEAR on that team (a wallet would ask to confirm). At the off the browser starts the race (`start_race`): only now is its seed drawn, from that block. In the first 40 seconds of the run, **Crack the whip** burns 200 of your team's coin (`whip`). |
 | **9.** Watch to the line | The card reads **Settled on NEAR**: `settle` re-ran the race inside the contract ([`sim.rs`](chain/src/sim.rs)) and got the same finish you watched. A winning ticket shows **Collect** (`claim_race`). |
 | **10.** Press **J** for the Seal Book and follow the objective line to the Wardens | Each trial you finish writes a seal to your account with `seal`; the contract checks the ones it can see (coin bought, hall wins, a bet at the Hippodrome). |
@@ -79,8 +80,8 @@ right are Use, Run, Chariot and Map. Each hall game has its own touch buttons.
 
 | Track | What Crownfall does for it | Where to look |
 |---|---|---|
-| **Memecoins With Mechanics** | Eight house coins, each on its own curve (price = NEAR reserve ÷ supply). The meme is the mechanic: the only way to play a house's hall game is to burn its coin, so every round played lifts the price for everyone who holds that house. Whips at the races burn coin too, and 2% of every trade feeds the crown pool. The coins are NEP-245 multi-tokens (`mt_transfer`, `mt_transfer_call`, `mt_balance_of`, with `mt_mint`/`mt_burn`/`mt_transfer` events), so they move between wallets and contracts like any NEAR token. | [`chain/src/lib.rs`](chain/src/lib.rs) (`buy`, `sell`, `enter`, `whip`, the `mt_*` methods), [`web/src/chain/game.ts`](web/src/chain/game.ts), the Mint panel in [`web/src/PlayHud.tsx`](web/src/PlayHud.tsx) |
-| **Games With Real Economies** | A 3D realm with nine hall games, a story of seven trials and chariot racing. Rounds cost real coin, the Library is a NEAR wager whose dice the contract rolls and settles itself, and races take pari-mutuel NEAR bets settled by running the race inside the contract. Four rival agents with their own wallets bet, whip and burn against you, deciding with a model on NEAR AI Cloud. The chain stays in the background: sign in with Google (or just a name) and the realm makes you a NEAR account whose key lives in your browser, so buying, betting, rounds and whips never pop anything up. A wallet works too. | [`agents/rivals.mjs`](agents/rivals.mjs), [`web/src/games/`](web/src/games/) (`host.ts` is the round lifecycle), [`web/src/realm/missions.ts`](web/src/realm/missions.ts), [`chain/src/sim.rs`](chain/src/sim.rs) + [`web/src/realm/raceSim.ts`](web/src/realm/raceSim.ts), [`web/api/lord.ts`](web/api/lord.ts) (social login), [`web/src/chain/near.ts`](web/src/chain/near.ts) (signing) |
+| **Memecoins With Mechanics** | Eight house coins, each priced by its house as a merchant: fair value is the NEAR reserve ÷ supply, and recent demand moves the asking price between ×0.7 and ×1.5. Sellers never get more than fair value, so every holder can always be paid, and a run that drains a house's purse shuts its hall until buyers bring it back. The whole rule is one file, and the Mint explains every price it shows. The meme is the mechanic: the only way to play a house's hall game is to burn its coin, so every round played lifts the price for everyone who holds that house. Whips at the races burn coin too, and 2% of every trade feeds the crown pool. The coins are NEP-245 multi-tokens (`mt_transfer`, `mt_transfer_call`, `mt_balance_of`, with `mt_mint`/`mt_burn`/`mt_transfer` events), so they move between wallets and contracts like any NEAR token. | [`chain/src/market.rs`](chain/src/market.rs) (the pricing rule) and its mirror [`web/src/chain/market.ts`](web/src/chain/market.ts), [`chain/src/lib.rs`](chain/src/lib.rs) (`buy`, `sell`, `enter`, `whip`, the `mt_*` methods), the Mint panel in [`web/src/PlayHud.tsx`](web/src/PlayHud.tsx), the week simulator [`web/src/chain/week.ts`](web/src/chain/week.ts) |
+| **Games With Real Economies** | A 3D realm with nine hall games, a story of seven trials and chariot racing. Rounds cost real coin, two hall games are judged by the contract from a seed it rolls, the Library is a NEAR wager whose dice the contract rolls and settles itself, and races take pari-mutuel NEAR bets settled by running the race inside the contract. Four rival agents with their own wallets bet, whip and burn against you, deciding with a model on NEAR AI Cloud. The chain stays in the background: sign in with Google (or just a name) and the realm makes you a NEAR account whose key lives in your browser, so buying, betting, rounds and whips never pop anything up. A wallet works too. | [`agents/rivals.mjs`](agents/rivals.mjs), [`web/src/games/`](web/src/games/) (`host.ts` is the round lifecycle), [`web/src/realm/missions.ts`](web/src/realm/missions.ts), [`chain/src/sim.rs`](chain/src/sim.rs) + [`web/src/realm/raceSim.ts`](web/src/realm/raceSim.ts), [`web/api/lord.ts`](web/api/lord.ts) (social login), [`web/src/chain/near.ts`](web/src/chain/near.ts) (signing) |
 | **Social Money** | Each house is a community with a shared treasury and reward rules. The crown pool collects 2% of every trade and the Gate's toll. When the season ends the house its players lifted highest is crowned, and the pool is split among that house's players by the favour they earned. | [`chain/src/lib.rs`](chain/src/lib.rs) (`add_favour`, `end_season`, `claim_crown`), the crown test in [`chain/src/tests.rs`](chain/src/tests.rs) |
 | **Open Innovation** | A memecoin market you walk through: the price chart is a living realm, trading is a trip to the Mint, and the leaderboard is a throne. The race that pays out is the same deterministic race you watch, checked bit for bit between Rust and TypeScript. | The whole repo; the race check is `sim_matches_js` in [`chain/src/tests.rs`](chain/src/tests.rs) |
 
@@ -193,7 +194,7 @@ signs you in whenever you're ready.
     <td width="50%"><img src="docs/shots/07-hippodrome.jpg" alt="A chariot race in progress at the Hippodrome, with the race card"></td>
   </tr>
   <tr>
-    <td><b>The Mint.</b> Each coin's price, supply, reserve and burn, read from the contract.</td>
+    <td><b>The Mint.</b> Each coin's buy and sell price, supply, reserve and burn, read from the contract, and why it costs that.</td>
     <td><b>The Hippodrome.</b> Eight teams, pari-mutuel bets, three whips each, settled on chain.</td>
   </tr>
 </table>
@@ -212,8 +213,8 @@ flowchart LR
   L[Sign-in service<br/>web/api/lord.ts] -- "makes name.vael.testnet" --> K
   W[A NEAR wallet, if you use one]
   subgraph C["crownfall-vael.testnet (chain/)"]
-    M[8 coin curves<br/>buy · sell]
-    H[Hall rounds<br/>enter · finish · stake]
+    M[8 merchant houses<br/>buy · sell · market.rs]
+    H[Hall rounds<br/>enter · finish · stake<br/>halls.rs judges two]
     SE[Seals<br/>seal]
     R[Races<br/>call_race · bet · whip · settle]
     SIM[sim.rs<br/>same race, bit for bit]
@@ -230,9 +231,26 @@ flowchart LR
   P --> T
 ```
 
-- **Eight coins on curves.** A coin's price is its house's NEAR reserve divided by its supply. Buying adds NEAR and
-  mints coin at that price; selling burns coin and pays NEAR back. Every trade pays a 5% fee: 3 points stay in the
-  reserve, which lifts the price for holders, and 2 go to the crown pool.
+- **Eight houses, eight merchants.** Each house prices its own coin ([`market.rs`](chain/src/market.rs), the whole
+  rule in one file):
+  - **Fair value** is the house's NEAR reserve divided by its supply.
+  - **Demand** is the NEAR bought (+) and sold (−) at the house lately. It halves every 20 minutes.
+  - **The merchant's factor** is 1 + demand ÷ 1 NEAR, held between ×0.7 and ×1.5. A buyer pays fair value × the
+    factor, so a rush of buying makes the coin dear, and what a buyer pays above fair value stays in the purse for
+    every holder. A seller gets fair value × the factor but never more than fair value, so a flood of selling makes
+    the coin cheap and the purse can always pay every holder in full.
+  - **A run on the house.** The house remembers its fullest purse. If selling drains it below 70% of that, the house
+    is broke and shuts: its hall takes no rounds and it buys no coin back. Every purchase while it's shut is an
+    investment in reopening it, and at 85% of the old peak the doors open again. A rival sworn to a shut house
+    invests to reopen it.
+  - Every trade pays a 5% fee: 3 points stay in the reserve and 2 go to the crown pool.
+
+  The Mint reads each house's `market` from `get_realm` and shows the buy and sell price with their factors; **Why
+  this price?** spells out the reasons from the same numbers ([`market.ts`](web/src/chain/market.ts) mirrors the
+  Rust line for line). **▶▶ Fast-forward a week** runs the same rule over a simulated week in the browser
+  ([`week.ts`](web/src/chain/week.ts)): forty traders with different habits, three whales who rush a house and dump
+  it, and the four rivals, with every run, shut and reopening marked on the chart. It is a simulation, not chain
+  history.
 - **Play to burn.** Every hall round burns that house's coin (`enter`: 400 coin, 500 at High Marrow). Burning shrinks
   supply against the same reserve, so every round played raises the price for everyone who holds that house. Coin
   burned is favour with the house, and it is the only favour there is.
@@ -241,6 +259,15 @@ flowchart LR
   receiver hands back), `mt_balance_of`, `mt_supply`, `mt_metadata_*`, and the standard `mt_mint`, `mt_burn` and
   `mt_transfer` events on every buy, burn and move. Coin you're sent can be burned in a hall like any other; the
   favour stays with whoever burns it.
+- **Two halls judged on chain.** In the Vintner's Cups (Velmont, hall 2) and Lantern Signals (Ashveil, hall 0)
+  the round is played from a seed the contract rolls at `enter` from the block's randomness (it's in the `enter`
+  event and in `hall_seed`). The browser draws every shuffle and every ship's lantern sequence from that seed with
+  the same generator ([`halls.rs`](chain/src/halls.rs), mirrored in
+  [`seeded.ts`](web/src/games/seeded.ts)), and `finish` sends your moves: the cup you lifted each round, or every
+  lamp you answered. The contract replays the round and decides the win and its grade itself; a `won: true` with
+  the wrong moves is a loss. Tests check a forged win is refused and a real one counts. What the chain still can't
+  see is time: the seed is public once you've entered, so a script that reads it could play perfectly. The check
+  stops a forged result, not a bot.
 - **The Library.** On NEAR, Liar's Dice is one wager the contract settles by itself, so no browser can report this
   win. `stake` takes 0.01 to 1 NEAR (the site stakes 0.1) and rolls your five dice from that block's randomness; you
   see them in `get_library`. You make one bid, how many of one face lie under both cups, with `finish(round, …, bid)`.
@@ -252,7 +279,8 @@ flowchart LR
   stake. Only a win the contract decided marks the Library won, so the Library seal is earned on chain. (Practice mode
   keeps the full game of Liar's Dice against Haseeb.)
 - **The seals** are kept per account, and the contract checks what it can see. The Mint seal needs a coin bought and
-  a round played. The Bridge, Lighthouse and Library seals each need a won round in that hall. The Hippodrome seal
+  a round played. The Bridge, Lighthouse and Library seals each need a won round in that hall, and all three of those
+  wins are decided by the contract (the Cups, Signals and the Library). The Hippodrome seal
   needs a bet on one of the contract's races. The Throne needs the other six seals and wins in three halls. The
   Gate's trial is a drive, which the chain can't see, so its seal is paid for instead: a 0.01 NEAR toll from your
   account to the crown pool.
@@ -293,6 +321,9 @@ same contract calls you do, and the contract treats them like any other player
   on chain when nobody is watching. Winners collect.
 - **Tribute.** About every twenty minutes each rival burns one entry in its own house's hall: favour for that house
   in the race for the Ashen Throne. It closes those rounds as lost, since it didn't play them.
+- **Seasons and rescues.** When the season clock runs out, Ser Odo crowns the house with the most favour
+  (`end_season`), and every rival collects its crown share. A rival whose house has been shut by a run buys back in
+  to reopen it.
 
 The race card lists the rivals' moves in the current race with their reasons, each one linked to its transaction.
 They run on Railway around the clock; their feed is public at
@@ -322,18 +353,19 @@ Either way the account holds a full-access key in your browser, and every call, 
 0.5 NEAR gas allowance. It can't send your NEAR anywhere except back to you. Anything that spends NEAR goes through
 your wallet.
 
-**What isn't proven on chain.** The eight hall games run in your browser, and your own client reports the result
-(`finish`). So a reported win there moves no money and no favour: it counts toward the Bridge, Lighthouse and Throne
-seals and the house's tally of wins, nothing else. The Library is the exception: its dice are rolled and its bid
-decided by the contract. Every NEAR that moves (the curve, burns, race results, the Library's bets, the Gate's toll,
+**What isn't proven on chain.** Six of the hall games (Axe Throw, the Asp's Basket, Archery, the Forge, Ice Stones,
+Falconry) are skill games in your browser, and your own client reports the result (`finish`). A reported win there
+moves no money and no favour: it counts toward the Throne's three hall wins and the house's tally of wins, nothing
+else. The Cups and Signals are judged by the contract from its own seed (above), and the Library's dice are rolled
+and its bid decided by the contract, so the Bridge, Lighthouse and Library seals are all earned on chain. Every NEAR that moves (the curve, burns, race results, the Library's bets, the Gate's toll,
 the crown) is computed on chain.
 
 | Call | Who signs | What it does |
 |---|---|---|
-| `buy(house)` / `sell(house, amount)` | wallet / game key | Trade a house coin on its curve |
-| `enter(house)` | game key | Burn the entry and open a hall round |
+| `buy(house)` / `sell(house, amount)` | wallet / game key | Trade a house coin with its merchant (a buy into a shut house is an investment toward reopening it) |
+| `enter(house)` | game key | Burn the entry and open a hall round (shut houses take none); in the Cups and Signals, roll the round's seed |
 | `stake()` | wallet | Put 0.01–1 NEAR on the Library table; your five dice are rolled from this block |
-| `finish(round, won, grade, bid)` | game key | Close a round: hall won and win tally; in the Library, settle the bid `[count, face]` against Haseeb's dice, rolled now |
+| `finish(round, won, grade, bid, play)` | game key | Close a round: hall won and win tally. In the Cups and Signals the contract replays `play` against the seed and decides; in the Library, settle the bid `[count, face]` against Haseeb's dice, rolled now |
 | `fund_library()` | wallet | Add NEAR to the Library's bank |
 | `seal(n)` | game key (the Gate: wallet, 0.01 NEAR toll) | Take a Warden's seal once its trial is met |
 | `call_race()` / `bet(race, house)` | game key / wallet | Open a race; back a team in NEAR |
@@ -343,7 +375,7 @@ the crown) is computed on chain.
 | `end_season()` / `claim_crown(season)` | game key | Crown a house; take your share of the pool |
 | `mt_transfer` / `mt_transfer_call` (and batch) | wallet | Send house coin (NEP-245) |
 
-Views: `get_realm`, `get_account`, `get_library`, `get_race`, `get_ticket`, `get_season`, `get_crown`, `quote_buy`, `quote_sell`, `preview_race`,
+Views: `get_realm` (with each house's `market` and the pricing `rules`), `get_account`, `hall_seed`, `get_library`, `get_race`, `get_ticket`, `get_season`, `get_crown`, `quote_buy`, `quote_sell`, `preview_race`,
 `version`, and NEP-245's `mt_balance_of`, `mt_batch_balance_of`, `mt_supply`, `mt_batch_supply`, `mt_token`,
 `mt_metadata_contract`, `mt_metadata_base_by_token_id`, `mt_metadata_token_all`.
 
