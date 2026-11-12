@@ -3,6 +3,10 @@ import { HOUSES } from '../realm/layout.ts';
 import { buy as practiceBuy, fmt, ledger, note, priceAt, sell as practiceSell } from '../realm/ledger.ts';
 import { chain, keyCall, onChain, units, view, walletCall, yocto } from './near.ts';
 import { quote, type Quote } from './market.ts';
+import { coins, fanfare } from '../realm/sound.ts';
+
+/** Coin on the counter when a trade goes through. */
+const ding = (got: number, n: number) => { if (got > 0) coins(n); return got; };
 
 export const held = (h: number) => (onChain() ? units(chain.me?.houses[h]?.coins) : ledger.held[h]);
 /** What one coin costs to buy now: on chain, the merchant's price (market.ts); in practice, the practice curve. */
@@ -23,20 +27,20 @@ export const favour = (h: number) => (onChain() ? units(chain.me?.houses[h]?.fav
 
 /** Buy house coin. On chain the wallet asks; resolves to the coins minted (0 if it didn't happen). */
 export async function buyCoin(h: number, near: number): Promise<number> {
-  if (!onChain()) return practiceBuy(h, near);
+  if (!onChain()) return ding(practiceBuy(h, near), 6);
   try {
     const got = await walletCall<string>(`Buying $${HOUSES[h].coin} with ${near} NEAR`, 'buy', { house: h }, near);
     note(`Bought ${fmt(units(got))} $${HOUSES[h].coin} for ${near} NEAR at the Warwick Mint, on NEAR.`, h);
-    return units(got);
+    return ding(units(got), 6);
   } catch { return 0; }
 }
 
 export async function sellCoin(h: number, q: number): Promise<number> {
-  if (!onChain()) return practiceSell(h, q);
+  if (!onChain()) return ding(practiceSell(h, q), 3);
   try {
     await keyCall(`Selling ${fmt(q)} $${HOUSES[h].coin}`, 'sell', { house: h, amount: yocto(q).toString() });
     note(`Sold ${fmt(q)} $${HOUSES[h].coin} at the Warwick Mint, on NEAR.`, h);
-    return q;
+    return ding(q, 3);
   } catch { return 0; }
 }
 
@@ -105,6 +109,7 @@ export const crownOf = (season: number, account: string) => view<Crown | null>('
 /** End the season once it's due: the house with the most favour takes the throne. Anyone can call it. */
 export async function endSeason(): Promise<number | null> {
   const h = await keyCall<number | null>('Crowning the house with the most favour', 'end_season', {});
+  if (h !== null && h !== undefined) fanfare(true);
   note(h === null || h === undefined ? 'The season ended with no favour earned: nobody was crowned.' : `House ${HOUSES[h].name} took the Ashen Throne, on NEAR.`, h ?? undefined);
   return h ?? null;
 }
@@ -112,5 +117,6 @@ export async function endSeason(): Promise<number | null> {
 /** Take your share of a crowned season's pool (sent to your account as NEAR). */
 export async function claimCrown(season: number, near: number) {
   await keyCall(`Taking your share of the crown pool: ${near.toFixed(4)} NEAR`, 'claim_crown', { season });
+  fanfare(true); coins(10);
   note(`Took ${near.toFixed(4)} NEAR from the crown pool of season ${season}, on NEAR.`);
 }

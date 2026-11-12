@@ -15,7 +15,7 @@ import { raceKey } from './drive.ts';
 import { emitPlay, keys, me, openPanel, pause, play, stick, takePressed, usePlay, type Seat, hushed, isAction, TOUCH } from './play.ts';
 import { nextLine, story } from './missions.ts';
 import { mapOpen, openMap } from '../Radar.tsx';
-import { crackWhip, hoof, step } from './sound.ts';
+import { crackWhip, hoof, step, whinny } from './sound.ts';
 import { surfaceAt } from './ambience.ts';
 import { speakAs } from './barks.ts';
 import { findPlace } from './places.ts';
@@ -214,7 +214,7 @@ function Player({ seat }: { seat: Seat }) {
         // Far enough back that the horses' heads stop short of you, and never on top of anyone.
         const bx = me.x - Math.sin(me.yaw) * 11.5, bz = me.z - Math.cos(me.yaw) * 11.5;
         const [wx, wz] = nearestFree(bx, bz, 3.5, true, 'car');
-        if (free(wx, wz, 3.5, true, 'car')) { c.x = wx; c.z = wz; c.yaw = me.yaw; c.v = 0; }
+        if (free(wx, wz, 3.5, true, 'car')) { c.x = wx; c.z = wz; c.yaw = me.yaw; c.v = 0; whinny(); }
       }
       if (k === ' ' && play.driving && c.cool <= 0) { c.boost = 1.6; c.cool = 3.2; shake.current = 0.5; crackWhip(); }
     }

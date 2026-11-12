@@ -84,3 +84,74 @@ export function voice(who: keyof typeof PITCH, len: number, pan = 0, urgent = fa
     t += d + (Math.random() < 0.18 ? 0.09 : 0.012);
   }
 }
+
+// ---------- One-shots for moments: the Mint, the seals, the Hippodrome, the halls ----------
+
+/** A short tone with an attack and a tail. */
+function tone(freq: number, gain: number, dur: number, when = 0, type: OscillatorType = 'sine', glide = 1) {
+  const a = audio(); if (!a) return;
+  const o = a.createOscillator(), g = a.createGain(), t = a.currentTime + when;
+  o.type = type; o.frequency.setValueAtTime(freq, t); if (glide !== 1) o.frequency.exponentialRampToValueAtTime(freq * glide, t + dur);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(gain, t + 0.012); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g).connect(a.destination); o.start(t); o.stop(t + dur + 0.05);
+}
+/** Coins: a few bright clinks, a little apart, landing on each other. `n` rises with the size of the trade. */
+export function coins(n = 4) {
+  for (let i = 0; i < n; i++) {
+    const t = i * (0.045 + Math.random() * 0.05), f = 2600 + Math.random() * 1800;
+    tone(f, 0.05, 0.22, t, 'triangle'); tone(f * 2.71, 0.018, 0.12, t, 'sine');
+    burst(5200, 6, 0.03, 0.03, t);
+  }
+}
+/** A wax seal pressed: a dull knock, then the soft lift. */
+export function stamp() { burst(160, 1.2, 0.45, 0.16); burst(900, 2, 0.08, 0.05); burst(2400, 3, 0.02, 0.08, 0.18); }
+/** Three brass notes rising to a held chord: a seal earned, a crown claimed. */
+export function fanfare(big = false) {
+  const notes = big ? [392, 523.3, 659.3, 784] : [392, 523.3, 659.3];
+  notes.forEach((f, i) => {
+    const last = i === notes.length - 1, d = last ? (big ? 1.6 : 1.1) : 0.2;
+    for (const det of [1, 1.004]) tone(f * det, 0.035, d, i * 0.16, 'sawtooth');
+    tone(f / 2, 0.02, d, i * 0.16, 'square');
+  });
+}
+/** The crowd: a swell of voices (noise through a vowel-ish band) that rises and falls over `dur` seconds. */
+export function crowd(dur = 2.5, loud = 1) {
+  const a = audio(); if (!a) return;
+  const t = a.currentTime;
+  for (const [f, q, v] of [[520, 0.8, 0.16], [1250, 1.1, 0.08], [2600, 1.5, 0.03]] as const) {
+    const s = a.createBufferSource(), fl = a.createBiquadFilter(), g = a.createGain(), lfo = a.createOscillator(), lg = a.createGain();
+    s.buffer = noise(a); s.loop = true; fl.type = 'bandpass'; fl.frequency.value = f; fl.Q.value = q;
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(v * loud, t + dur * 0.25); g.gain.setValueAtTime(v * loud, t + dur * 0.55); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    lfo.frequency.value = 3 + Math.random() * 3; lg.gain.value = v * loud * 0.3; lfo.connect(lg).connect(g.gain);
+    s.connect(fl).connect(g).connect(a.destination); s.start(t, Math.random()); s.stop(t + dur + 0.1); lfo.start(t); lfo.stop(t + dur + 0.1);
+  }
+}
+/** A heavy door on old hinges. */
+export function door() {
+  const a = audio(); if (!a) return;
+  const t = a.currentTime, o = a.createOscillator(), f = a.createBiquadFilter(), g = a.createGain();
+  o.type = 'sawtooth'; o.frequency.setValueAtTime(70, t); o.frequency.linearRampToValueAtTime(115, t + 0.5); o.frequency.linearRampToValueAtTime(85, t + 0.75);
+  f.type = 'bandpass'; f.frequency.value = 900; f.Q.value = 9;
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.05, t + 0.08); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.8);
+  o.connect(f).connect(g).connect(a.destination); o.start(t); o.stop(t + 0.85);
+  thud(0.6);
+}
+/** A page turned. */
+export function page() { burst(3800, 0.6, 0.05, 0.18, 0, 'highpass'); burst(1800, 1, 0.025, 0.12, 0.05); }
+/** A horse answering a whistle. */
+export function whinny() {
+  const a = audio(); if (!a) return;
+  const t = a.currentTime, o = a.createOscillator(), f = a.createBiquadFilter(), g = a.createGain(), vib = a.createOscillator(), vg = a.createGain();
+  o.type = 'sawtooth'; o.frequency.setValueAtTime(620, t); o.frequency.exponentialRampToValueAtTime(980, t + 0.25); o.frequency.exponentialRampToValueAtTime(380, t + 1.1);
+  vib.frequency.value = 22; vg.gain.value = 60; vib.connect(vg).connect(o.frequency);
+  f.type = 'bandpass'; f.frequency.value = 1400; f.Q.value = 2.5;
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.035, t + 0.06); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.15);
+  o.connect(f).connect(g).connect(a.destination); o.start(t); o.stop(t + 1.2); vib.start(t); vib.stop(t + 1.2);
+}
+/** A soft click for buttons and panels. */
+export function click() { tone(1800, 0.025, 0.05, 0, 'triangle'); }
+/** The end of a hall game: up for a win, down for a loss. */
+export function sting(won: boolean) {
+  const n = won ? [523.3, 659.3, 784, 1046.5] : [392, 349.2, 293.7];
+  n.forEach((f, i) => tone(f, won ? 0.06 : 0.045, won && i === n.length - 1 ? 0.9 : 0.28, i * 0.11, 'triangle'));
+}

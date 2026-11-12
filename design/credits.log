@@ -10,3 +10,9 @@ Nov 8: leaves/needles/bark textures 3 credits. Meshy pine+oak (≈76) unusable a
 Nov 8 visual pass total: 321 credits (balance 2815.54 -> 2494.54). Crownfall running total ~865.5
 Nov 8: horse sheet gpt_image_2_6 1 (bb2510db) + horse 3D meshy_v7 38 (20e50904); left of 180: 141
 Nov 8: balance check 2455.09 → spent 39.45 of the 180 cap; left of 180: 140.5 (floor 2314.5)
+Nov 8: film VO 14 lines text2speech_v2 minimax ~4.2 credits
+Nov 8: film VO retakes 10 lines ~3 credits
+Nov 8: TRAILER VO Alistair preset (not cloned) 3 voice tests + 18 lines text2speech_v2 minimax ~6 credits
+Nov 9: film v8b (cloned) + trailer t8b (Alistair) favour-line retakes, text2speech_v2 minimax ~0.6 credits
+Nov 12: Crownfall in-game theme, elevenlabs_music_v2_5 120s instrumental, 17.44 credits
+Nov 12: Crownfall 52 voiced lines (story Wardens, Chronicle, scribes, race caller, Mint clerk), text2speech_v2 minimax presets, ~16 credits

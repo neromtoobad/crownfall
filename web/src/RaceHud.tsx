@@ -3,6 +3,7 @@
 // result is the one the contract computes by running the same race this screen draws.
 import { useEffect, useState } from 'react';
 import { HOUSES } from './realm/layout.ts';
+import './realm/caller.ts'; // the race caller listens to the race from here on
 import { NearMark } from './NearMark.tsx';
 import { M, back, betsOpen, crack, laneLen, laneR, live as liveRace, odds, setWatch, standings, toOff, useRace } from './realm/race.ts';
 import { CONTRACT, EXPLORER, onChain, useChain } from './chain/near.ts';

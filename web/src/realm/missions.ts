@@ -10,6 +10,7 @@ import { takeSeal } from '../chain/game.ts';
 import { chain, onChain } from '../chain/near.ts';
 import { PLACES, STABLES } from './places.ts';
 import { emitPlay, me, play, hush } from './play.ts';
+import { fanfare, stamp } from './sound.ts';
 import { LIBRARY, doorOf, libDoor } from './rooms.ts';
 import { flagsGame } from '../games/host.ts';
 
@@ -131,8 +132,8 @@ export const MISSIONS: Mission[] = [
     id: 'mint', title: 'Coin of the Realm', giver: G('warwick'), needs: () => hasSeal('Gate'), seal: 'Mint',
     brief: () => `Buy $${mine().coin} at the Mint, then enter your own hall and play its game once.`,
     intro: () => [
-      { who: 'Kain Warwick', text: `House ${mine().name}. A seat is a chair until there's coin under it.` },
-      { who: 'Kain Warwick', text: `Every house strikes its own coin here, on NEAR, on a curve: each one costs a little more than the last. Buy some $${mine().coin}.` },
+      { who: 'Kain Warwick', text: 'A seat is a chair until there’s coin under it.' },
+      { who: 'Kain Warwick', text: 'Every house strikes its own coin here, on NEAR, and every house is a merchant. Rush to buy and it’s dear; flood it with selling and it’s cheap. Buy some of your house’s coin.' },
       { who: 'Kain Warwick', text: 'Then go home. Every hall in Vael has a game, and every round played burns that house’s coin. Play yours once. That’s how a coin earns its price here.' },
     ],
     steps: [
@@ -151,7 +152,7 @@ export const MISSIONS: Mission[] = [
     brief: () => 'Win the Vintner’s Cups in House Velmont’s cellar at Vinehold.',
     intro: () => [
       { who: 'Eddy Lazzarin', text: 'A bridge you can’t check is a long way down. I don’t take anyone’s word for what’s on the other side.' },
-      { who: 'Eddy Lazzarin', text: 'The vintner at Vinehold swears you can’t follow his cups. Prove him wrong. Watch everything; trust nothing.' },
+      { who: 'Eddy Lazzarin', text: 'The vintner at Vinehold swears you can’t follow his cups. Prove him wrong. The chain replays every shuffle, so it will know. Watch everything; trust nothing.' },
     ],
     steps: [{ text: () => 'Win **the Vintner’s Cups** in House Velmont’s hall at **Vinehold**', target: () => doorAt(2), check: (s) => won('cups', s) }],
     outro: () => [{ who: 'Eddy Lazzarin', text: 'Verified. The seal of the Bridge, and my respect, which is harder to get.' }],
@@ -184,7 +185,7 @@ export const MISSIONS: Mission[] = [
     brief: () => 'Drive for your house at the Hippodrome and finish in the top four.',
     intro: () => [
       { who: 'Mert Mumtaz', text: 'Eight houses, eight teams, one line. Fast is the only speed I respect.' },
-      { who: 'Mert Mumtaz', text: `Take the reins of House ${mine().name}. Top four and the seal of the Hippodrome is yours. Inside lanes are short. Crowded too.` },
+      { who: 'Mert Mumtaz', text: 'Take the reins for your house. Top four and the seal of the Hippodrome is yours. Inside lanes are short. Crowded too.' },
     ],
     steps: [{ text: () => `Drive at the **Hippodrome** (the stables) and finish in the **top four**`, target: () => STABLES,
       check: (s) => since(flags.race, s) && flags.race!.place <= 4,
@@ -361,6 +362,8 @@ function advanceStep() {
 function pass(m: Mission) {
   saved.done.push(m.id);
   if (m.seal && !saved.seals.includes(m.seal)) saved.seals.push(m.seal);
+  // Wax on parchment, then the horns.
+  stamp(); setTimeout(() => fanfare(!!m.seal), 350);
   saved.renown += m.reward.renown;
   if (m.reward.title) saved.titles.push(m.reward.title);
   persist();

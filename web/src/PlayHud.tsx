@@ -21,6 +21,8 @@ import { buyCoin, burned, claimCrown, crownOf, endSeason, favour, held, price, q
 import { CONTRACT, EXPLORER, ensureKey, onChain, openSignIn, signsHere, units, useChain } from './chain/near.ts';
 import { SignIn } from './chain/SignIn.tsx';
 import { WeekPanel } from './WeekPanel.tsx';
+import { musicOn, setMusic } from './realm/music.ts';
+import './realm/cues.ts'; // doors, pages, clicks and the Mint clerk follow play from here
 
 export function PlayHud() {
   const p = usePlay();
@@ -413,6 +415,7 @@ function RacePanel({ onGo }: { onGo: () => void }) {
 /** Esc or P: the pause menu. Where the desktop buttons used to sit over the game. */
 function Pause() {
   const h = HOUSES[play.seat!.house];
+  const [music, setMusicState] = useState(musicOn());
   return (
     <div className="pause" onClick={(e) => { if (e.target === e.currentTarget) pause(false); }}>
       <nav>
@@ -421,12 +424,14 @@ function Pause() {
         <button onClick={() => pause(false)}>Resume</button>
         <button onClick={() => { pause(false); openMap(true); }}>Map of Vael</button>
         <button onClick={() => setMode('map')}>Leave for the realm view</button>
+        <button onClick={() => { setMusic(!music); setMusicState(!music); }}>Music: {music ? 'on' : 'off'}</button>
         <dl>
           <dt>{TOUCH ? 'Left thumb' : 'W A S D'}</dt><dd>walk · {TOUCH ? 'push to the edge' : 'Shift'} to run</dd>
           <dt>{TOUCH ? 'Use' : 'E'}</dt><dd>talk, trade, take the reins, step down</dd>
           <dt>{TOUCH ? 'Chariot' : 'C'}</dt><dd>whistle for your chariot</dd>
           <dt>{TOUCH ? 'Whip' : 'Space'}</dt><dd>crack the whip while driving</dd>
           <dt>{TOUCH ? 'Map' : 'M'}</dt><dd>the map · click it to set a waypoint</dd>
+          {!TOUCH && <><dt>N</dt><dd>music on or off</dd></>}
         </dl>
         <footer><NearPill /><span>{onChain() ? `Playing on NEAR testnet · ${CONTRACT}` : 'Practice purse. Sign in (top left) to play on NEAR testnet.'}</span></footer>
       </nav>

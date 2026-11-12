@@ -178,7 +178,7 @@ Each game opens on a card that tells you what the round costs and what a win pay
 1. Open the site, look over the realm, and press **Sign in & take your seat**. Sign in with Google, or a name, or a
    NEAR testnet wallet, then pick a house, a lord and a name.
 2. **WASD** to walk (Shift to run), **E** to talk, trade, enter and take the reins, **C** to whistle for your
-   chariot, **Space** to crack the whip, **M** for the map, **J** for the Seal Book, **Esc** to pause.
+   chariot, **Space** to crack the whip, **M** for the map, **J** for the Seal Book, **N** to turn the music on or off, **Esc** to pause.
    On a phone, turn it sideways: the left thumb is the joystick, drag on the right to look, and the buttons on the
    right are Use, Run, Chariot and Map.
 3. Follow the objective line at the bottom of the screen. The Seal Book (J) lists every trial and every hall.
@@ -388,6 +388,14 @@ Views: `get_realm` (with each house's `market` and the pricing `rules`), `get_ac
   [near-connect](https://github.com/hot-dao/near-connect) for wallets.
 - **Sign-in:** Google Identity Services for the Google button, and a Vercel function with near-api-js that makes the
   accounts.
+- **Sound:** an original Crownfall theme, made for the game with ElevenLabs Music. It plays in sets with quiet
+  stretches between them, louder at the Hippodrome and lower under hall games, and it dips whenever someone speaks
+  ([`web/src/realm/music.ts`](web/src/realm/music.ts)). There are 52 voiced lines read with preset voices: the Wardens,
+  the Chronicle, the scribes, a race caller who follows the actual race, and the Mint clerk, who comments on the live
+  market. The list of lines and who speaks each is in [`design/audio/lines.mjs`](design/audio/lines.mjs). Townsfolk
+  murmur, react to you, gossip about the realm as it stands on chain (a shut house, a dear coin, who leads the season,
+  who took the last cup), and talk among themselves as you pass. Every sound effect (hooves, coins, seals, crowd,
+  doors, horns) is synthesized in WebAudio ([`web/src/realm/sound.ts`](web/src/realm/sound.ts)).
 - **Hosting:** Vercel, at crownfall.nerom.site.
 
 ## Repo layout

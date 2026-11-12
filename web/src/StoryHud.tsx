@@ -10,6 +10,8 @@ import { chain, onChain, useChain } from './chain/near.ts';
 import { SEALS, abandon, current, nextHint, nextLine, story, timeLeft } from './realm/missions.ts';
 import { TOUCH, me, play, usePlay, press } from './realm/play.ts';
 import { MARKER } from './realm/Story.tsx';
+import { preload, sayLine, stopVoice } from './realm/vo.ts';
+import { voice } from './realm/sound.ts';
 import { NearMark } from './NearMark.tsx';
 import { bark } from './realm/barks.ts';
 
@@ -40,16 +42,27 @@ export function Objective() {
   );
 }
 
+const FEMALE = /Ysolde|clerk|goodwife|weaver|Lady|Queen/i;
+
 export function Talk() {
   const p = usePlay();
   const t = p.game ? undefined : story.talk;
   useEffect(() => {
     if (!t) return;
-    // Lines move on by themselves after a while; E, Space or a click moves them on sooner.
+    // Lines move on by themselves after a while; E, Space or a click moves them on sooner. A voiced line waits for
+    // its speaker to finish; any other line gets a murmur under it.
     const line = t.lines[t.i], wait = 2200 + line.text.length * 38;
-    const id = setTimeout(nextLine, wait);
-    return () => clearTimeout(id);
+    if (t.i === 0) preload(t.lines.map((l) => l.text));
+    let id = 0, gone = false;
+    void sayLine(line.text).then((secs) => {
+      if (gone) return;
+      if (secs === undefined) voice(FEMALE.test(line.who) ? 'woman' : 'lord', line.text.length);
+      id = window.setTimeout(nextLine, secs === undefined ? wait : Math.max(1800, secs * 1000 + 900));
+    });
+    return () => { gone = true; clearTimeout(id); };
   }, [t, t?.i]);
+  // The talk closed (or was skipped to its end): nobody goes on talking over the game.
+  useEffect(() => { if (!t) stopVoice(); }, [t]);
   return (
     <>
       <div className={`letterbox lb-top ${t ? 'on' : ''}`} />

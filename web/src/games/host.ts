@@ -10,6 +10,7 @@ import { emitPlay, hush, hushed, isAction, play, takePressed } from '../realm/pl
 import { LIBRARY, hallHouse, roomOf, type GameId, type Room } from '../realm/rooms.ts';
 import { JUDGED, LIB_STAKE, enterHall, finishHall, hallSeed, held, library, type Library } from '../chain/game.ts';
 import { hallPlay } from './seeded.ts';
+import { sting } from '../realm/sound.ts';
 import { onChain } from '../chain/near.ts';
 
 export interface Result {
@@ -137,6 +138,7 @@ export function endRound(res: Result) {
   if (session.phase !== 'play') return;
   const r = session.room!, h = hallHouse(r.house);
   session.result = res; session.phase = 'result';
+  sting(res.won);
   // On the practice purse a hall win pays 1–4 NEAR from the house treasury, and a Library win hands the stake back (a
   // free first game pays the stake's worth).
   const g = Math.min(1, Math.max(0, res.grade ?? 0.5));
