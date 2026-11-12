@@ -409,9 +409,24 @@ Views: `get_realm` (with each house's `market` and the pricing `rules`), `get_ac
 | `web/api/lord.ts` | The sign-in service: Google or a name in, a funded `*.vael.testnet` account out |
 | `chain/` | The contract, the race simulation and its tests |
 | `agents/` | The four rival agents (`rivals.mjs`) and their feed |
-| `contract/`, `sim/` | An earlier design (houses, decrees, councils), kept for reference and not deployed |
 | `design/` | Design notes, the story, playtest audits |
 | `docs/shots/` | The screenshots in this README |
+
+## When it was built
+
+Everything here was made during the hackathon (1 to 14 November 2026). Nothing in the repo existed before 1 November.
+
+- **4 November:** design notes and a JavaScript economy simulator for an earlier idea, Pantheon (gods as memecoins).
+- **7 November:** a first Rust contract for that design. Crownfall replaced it the same day.
+- **8 November:** the first commit ([`25edcfb`](https://github.com/neromtoobad/crownfall/commit/25edcfb)). It holds the
+  game as built locally since the 7th. It also carried the Pantheon contract and simulator, which were never deployed
+  for Crownfall and were removed on 12 November. They are still in that commit if you want to see them.
+- **8 to 12 November:** everything else, commit by commit in the history: the contract in `chain/` (upgraded
+  in place on testnet as it grew), the rivals, sign-in, the races, the market, sound.
+
+Outside code: near-sdk, near-api-js, near-connect, React, three.js and react-three-fiber. Models, art, music and
+voices were made for this game (see [Built with](#built-with)). Parallax, the team's other entry, shares no code or
+contracts with Crownfall.
 
 ## Run it
 
