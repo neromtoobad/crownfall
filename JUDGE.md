@@ -5,6 +5,11 @@ Each claim below comes with a way to check it. Every link goes to the chain, the
 - **Play:** https://crownfall.nerom.site
 - **Judge's seat:** https://crownfall.nerom.site/?judge. It makes you a testnet account with NEAR in it (no wallet, no
   sign-in) and keeps a checklist on screen. Each line ticks itself when the contract says so.
+- **Live proof, no sign-in:** https://crownfall.nerom.site/proof ([JSON](https://crownfall.nerom.site/proof.json)).
+  Reads the contract, the rival agents' feed and the transaction index live, and checks the deployed code hash
+  against the reproducible build in section 3.
+- **Activity (12 November, 18:45 UTC):** 3,445 transactions on the contract from 28 accounts; 398 races run and settled
+  on chain; 623 bets; 525 hall rounds entered; about 3,180 transactions signed by the four rival agents.
 - **Demo (2:10):** https://x.com/neromtoobad/status/2119855648150339694
 - **Contract:** [`crownfall-vael.testnet`](https://testnet.nearblocks.io/address/crownfall-vael.testnet), source in [`chain/`](chain/src/lib.rs)
 - **Tracks:** Games, Memecoins, Social Money, Open Innovation (the [README](README.md#hackathon-tracks) maps each one to the code)
@@ -20,12 +25,15 @@ Each claim below comes with a way to check it. Every link goes to the chain, the
 | Seals are kept on chain and follow the story | Meet the Warden of the Gate | [Gate seal](https://testnet.nearblocks.io/txns/CHnjsQtopTJYuBaskgL2Mkk9trXJkCZ985Y1AsUcUZV3) (0.01 NEAR toll), then the [Mint seal](https://testnet.nearblocks.io/txns/AGuxD8yxh8BfpPGio71SRTG2ipZXDtZ2iFZGeWhpsEU5), which the contract only grants after a buy and a played round | `seal` in [`lib.rs`](chain/src/lib.rs); `seals_follow_the_story`, `the_gate_takes_a_toll` |
 | The season crowns a house and pays its players | Seal Book, then the Ashen Throne | [Season 1 crowned House Halloway](https://testnet.nearblocks.io/txns/59xadvSBtkGywUdMtzbvmcaeDKogEyE4Yy3KiigtcNKT) on 12 November; rival Bram, a Halloway player, then [claimed a share of the pool](https://testnet.nearblocks.io/txns/8HehnS9v1Sy2Dn21Br38trGKRXUJeGMjzSGEhR6TGY7D) | `end_season`, `claim_crown`; `the_crown_goes_to_the_house_with_most_favour` |
 | Coins are standard NEP-245 tokens | – | `mt_balance_of` on the contract page | `mt_*` in [`lib.rs`](chain/src/lib.rs); `coins_are_multi_tokens`, `a_transfer_call_returns_what_isnt_used` |
-| Four rival agents play with their own wallets | Their moves show in the feed on the map | [`cf-odo-vael.testnet`](https://testnet.nearblocks.io/address/cf-odo-vael.testnet) and the other rivals | [`agents/rivals.mjs`](agents/rivals.mjs) |
+| Four rival agents play with their own wallets, deciding with a model on NEAR AI Cloud | Their moves show in the feed on the map, and on [/proof](https://crownfall.nerom.site/proof) with each reason | [Nell bets](https://testnet.nearblocks.io/txns/9WD3oFFcZ8iKDiHoX7ccCaVfdd2ya2ouXGHtQ7uWvqF8), [Nell whips](https://testnet.nearblocks.io/txns/DB6TfbrdZ1r2MMU8ZDEhUB5jSkKV6HtvdbLjogeFjPkj), [Odo settles a race](https://testnet.nearblocks.io/txns/4C76yJmTnEt9dg8swhnR3uMTntuKx4KMc7Z3XaLHJ7Qc); about 3,180 transactions in all from [`cf-odo-vael.testnet`](https://testnet.nearblocks.io/address/cf-odo-vael.testnet) and the other three | [`agents/rivals.mjs`](agents/rivals.mjs) |
+| A win in a hall the chain can't see moves no money | Halls other than the Cups and Signals say so on the round card: **Score on your word** | a `finish` there logs only `won` and `grade`; the house's favour comes from the entry burn, never from the win | `finish` in [`lib.rs`](chain/src/lib.rs); `a_reported_win_moves_no_money` |
+| No wallet: sign in with Google or a name | **Sign in**, type a name, **Make my lord** | [`osric376.vael.testnet` made at sign-in](https://testnet.nearblocks.io/txns/4b5gAAUxvEMEKy7Gba64xWNFqA6uEje5btUws3mPciur) (create, fund, add key) | [`web/api/lord.ts`](web/api/lord.ts) |
 
 ## 2. Tests
 
 52 contract tests run on every push to `chain/` ([CI](https://github.com/neromtoobad/crownfall/actions/workflows/contract.yml)).
-To run them yourself:
+They live in [`chain/src/tests/`](chain/src/tests/), one file per part of the game (rounds, library, seals, races,
+nep245, upgrade, merchants), plus the unit tests in `halls.rs` and `market.rs`. To run them yourself:
 
 ```bash
 cd chain && cargo test --release

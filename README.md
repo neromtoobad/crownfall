@@ -4,6 +4,7 @@
 
 <p align="center">
   <a href="https://crownfall.nerom.site"><b>Play it</b></a> ·
+  <a href="https://crownfall.nerom.site/proof"><b>Live on-chain proof</b></a> ·
   <a href="https://testnet.nearblocks.io/address/crownfall-vael.testnet">Contract on NEAR testnet</a> ·
   <a href="#for-judges-try-it-in-ten-minutes">Try it in ten minutes</a> ·
   <a href="#what-happens-on-near">How the chain side works</a> ·
@@ -25,6 +26,30 @@ and a run on a house shuts its hall until its players buy back in.
 - Built for the NEAR HACKATHON, November 2026, in four tracks ([see below](#hackathon-tracks)). The same team's
   other entry is [Parallax](https://github.com/neromtoobad/parallax), a company of AI agents that bid for work. The two
   projects are independent: no shared code or contracts.
+
+## Live on NEAR right now
+
+**[crownfall.nerom.site/proof](https://crownfall.nerom.site/proof)** reads the contract, the rival agents and the
+transaction index live, with no sign-in ([`/proof.json`](https://crownfall.nerom.site/proof.json) for scripts). It
+also checks that the deployed code is the reproducible build of this repo. As of 12 November, 18:45 UTC:
+
+- **3,445 transactions** on [`crownfall-vael.testnet`](https://testnet.nearblocks.io/address/crownfall-vael.testnet) since 8 November, from 28 accounts.
+- **398 races** run and settled by the contract, with 623 bets, 357 whips and 93 winning claims.
+- **525 hall rounds** entered, each one burning that house's coin.
+- **About 3,180 of those transactions were signed by the four rival agents**, from their own accounts.
+- **Season 1 is over:** House Halloway was [crowned on chain](https://testnet.nearblocks.io/txns/59xadvSBtkGywUdMtzbvmcaeDKogEyE4Yy3KiigtcNKT) and a
+  Halloway player [took a share of the pool](https://testnet.nearblocks.io/txns/8HehnS9v1Sy2Dn21Br38trGKRXUJeGMjzSGEhR6TGY7D). Season 2 ends 13 November, 15:00 UTC.
+
+## Games With Real Economies, claim by claim
+
+| What | How Crownfall does it | See it on chain |
+|---|---|---|
+| **AI agents as NPCs, with their own wallets** | Four rival lords play against you. Each has its own testnet account and decides every bet with a model on NEAR AI Cloud (DeepSeek V4.1 Flash), held to limits it can't argue past; each move goes out as an ordinary transaction with its reason in the [feed](https://crownfall.nerom.site/proof). One of them also keeps the track running: it calls, starts and settles every race. Anyone may. | [Nell's bet](https://testnet.nearblocks.io/txns/9WD3oFFcZ8iKDiHoX7ccCaVfdd2ya2ouXGHtQ7uWvqF8), [Odo settles race 396](https://testnet.nearblocks.io/txns/4C76yJmTnEt9dg8swhnR3uMTntuKx4KMc7Z3XaLHJ7Qc), [Nell's whip](https://testnet.nearblocks.io/txns/DB6TfbrdZ1r2MMU8ZDEhUB5jSkKV6HtvdbLjogeFjPkj); [`cf-odo-vael.testnet`](https://testnet.nearblocks.io/address/cf-odo-vael.testnet) |
+| **A market the players own** | Every house is a coin players buy and sell at the Mint. The price comes from the house's NEAR reserve and recent demand, and nothing else: no method lets anyone, us included, set a price, mint coin or move a player's coin. | [buy](https://testnet.nearblocks.io/txns/32aYEBmczXYyXYreh6oiMcCUicbJoZ2z9R3VstxfFUsZ) (logs `mt_mint`) |
+| **An economy that moves without a patch** | Playing burns coin, so supply shrinks as people play. A run of selling shuts a house's hall until buyers reopen it. Each season the house with the most favour is crowned and its players split the pool. All of it is contract rules running on their own. | [enter](https://testnet.nearblocks.io/txns/BPG9vKCie5ZaWoWyj2CWenKzgibhQdAQFAQbE5WjQUyt) (logs `mt_burn` of 400 OWL), [season crowned](https://testnet.nearblocks.io/txns/59xadvSBtkGywUdMtzbvmcaeDKogEyE4Yy3KiigtcNKT) |
+| **Outcomes the chain decides** | Races are re-run inside the contract from a seed drawn after betting closes. Two hall games (the Cups and the Signals) are judged by replaying your moves against a seed rolled when you entered. The Library's dice are rolled and settled on chain. In the other halls the contract can't see the game, so a win there pays nothing; it only counts toward the seals. | [settle](https://testnet.nearblocks.io/txns/4cvdtaye9Ma2g5yt6P6KwLiHbDwRn48X1ZkzuMrkDusM), [a forged hall win scored 0](https://testnet.nearblocks.io/txns/DEBv7JDPoYYhVFHgNJT1tgdke7fo4qp1gGC48u1fgXUh) |
+| **No wallet needed** | Sign in with Google or just a name and the realm makes you a funded `name.vael.testnet` account. Its key stays in your browser, limited to this contract, so buying, betting, rounds and whips never pop anything up. A wallet works too. | [`osric376.vael.testnet` made at sign-in](https://testnet.nearblocks.io/txns/4b5gAAUxvEMEKy7Gba64xWNFqA6uEje5btUws3mPciur) |
+| **Standard tokens** | The coins are NEP-245 multi-tokens (`mt_transfer`, `mt_transfer_call`, `mt_balance_of`), so they move to any wallet or contract. | `mt_balance_of` on [the contract](https://testnet.nearblocks.io/address/crownfall-vael.testnet) |
 
 <table>
   <tr>
@@ -89,8 +114,8 @@ right are Use, Run, Chariot and Map. Each hall game has its own touch buttons.
 |---|---|---|
 | **Memecoins With Mechanics** | Eight house coins, each priced by its house as a merchant: fair value is the NEAR reserve ÷ supply, and recent demand moves the asking price between ×0.7 and ×1.5. Sellers never get more than fair value, so every holder can always be paid, and a run that drains a house's purse shuts its hall until buyers bring it back. The whole rule is one file, and the Mint explains every price it shows. The meme is the mechanic: the only way to play a house's hall game is to burn its coin, so every round played lifts the price for everyone who holds that house. Whips at the races burn coin too, and 2% of every trade feeds the crown pool. The coins are NEP-245 multi-tokens (`mt_transfer`, `mt_transfer_call`, `mt_balance_of`, with `mt_mint`/`mt_burn`/`mt_transfer` events), so they move between wallets and contracts like any NEAR token. | [`chain/src/market.rs`](chain/src/market.rs) (the pricing rule) and its mirror [`web/src/chain/market.ts`](web/src/chain/market.ts), [`chain/src/lib.rs`](chain/src/lib.rs) (`buy`, `sell`, `enter`, `whip`, the `mt_*` methods), the Mint panel in [`web/src/PlayHud.tsx`](web/src/PlayHud.tsx), the week simulator [`web/src/chain/week.ts`](web/src/chain/week.ts) |
 | **Games With Real Economies** | A 3D realm with nine hall games, a story of seven trials and chariot racing. Rounds cost real coin, two hall games are judged by the contract from a seed it rolls, the Library is a NEAR wager whose dice the contract rolls and settles itself, and races take pari-mutuel NEAR bets settled by running the race inside the contract. Four rival agents with their own wallets bet, whip and burn against you, deciding with a model on NEAR AI Cloud. The chain stays in the background: sign in with Google (or just a name) and the realm makes you a NEAR account whose key lives in your browser, so buying, betting, rounds and whips never pop anything up. A wallet works too. | [`agents/rivals.mjs`](agents/rivals.mjs), [`web/src/games/`](web/src/games/) (`host.ts` is the round lifecycle), [`web/src/realm/missions.ts`](web/src/realm/missions.ts), [`chain/src/sim.rs`](chain/src/sim.rs) + [`web/src/realm/raceSim.ts`](web/src/realm/raceSim.ts), [`web/api/lord.ts`](web/api/lord.ts) (social login), [`web/src/chain/near.ts`](web/src/chain/near.ts) (signing) |
-| **Social Money** | Each house is a community with a shared treasury and reward rules. The crown pool collects 2% of every trade and the Gate's toll. When the season ends the house its players lifted highest is crowned, and the pool is split among that house's players by the favour they earned. | [`chain/src/lib.rs`](chain/src/lib.rs) (`add_favour`, `end_season`, `claim_crown`), the crown test in [`chain/src/tests.rs`](chain/src/tests.rs) |
-| **Open Innovation** | A memecoin market you walk through: the price chart is a living realm, trading is a trip to the Mint, and the leaderboard is a throne. The race that pays out is the same deterministic race you watch, checked bit for bit between Rust and TypeScript. | The whole repo; the race check is `sim_matches_js` in [`chain/src/tests.rs`](chain/src/tests.rs) |
+| **Social Money** | Each house is a community with a shared treasury and reward rules. The crown pool collects 2% of every trade and the Gate's toll. When the season ends the house its players lifted highest is crowned, and the pool is split among that house's players by the favour they earned. | [`chain/src/lib.rs`](chain/src/lib.rs) (`add_favour`, `end_season`, `claim_crown`), the crown test in [`chain/src/tests/rounds.rs`](chain/src/tests/rounds.rs) |
+| **Open Innovation** | A memecoin market you walk through: the price chart is a living realm, trading is a trip to the Mint, and the leaderboard is a throne. The race that pays out is the same deterministic race you watch, checked bit for bit between Rust and TypeScript. | The whole repo; the race check is `sim_matches_js` in [`chain/src/tests/races.rs`](chain/src/tests/races.rs) |
 
 ## The story
 

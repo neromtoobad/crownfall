@@ -6,7 +6,7 @@ import { TOUCH, usePlay } from '../realm/play.ts';
 import { beginRound, gameDef, quitGame, session } from './host.ts';
 import { sigilURL } from '../realm/sigils.ts';
 import { useMemo } from 'react';
-import { LIB_STAKE, buyCoin, held, quoteOf } from '../chain/game.ts';
+import { JUDGED, LIB_STAKE, buyCoin, held, quoteOf } from '../chain/game.ts';
 import { onChain, signsHere, useChain } from '../chain/near.ts';
 
 export function GameHud() {
@@ -18,6 +18,8 @@ export function GameHud() {
   if (!p.game || !room || !def) return null;
   const h = hallHouse(room.house), lib = room.house === LIBRARY;
   const live = onChain(), short = live && !lib && held(room.house) < def.entry;
+  // Two halls are judged by the contract itself; in the others the chain can't see the game, so it takes the player's word.
+  const judged = !lib && JUDGED.includes(room.house);
   // A run broke the house: its hall takes no rounds until purchases bring its purse back (market.rs).
   const q = live && !lib ? quoteOf(room.house) : undefined, closed = !!q?.shut;
   const style = { ['--c' as string]: h.colors[0], ['--c2' as string]: h.colors[1] };
@@ -54,6 +56,9 @@ export function GameHud() {
           ? <><b>The house stands you this round.</b><span>After this, a round burns {fmt(def.entry)} ${h.coin}.</span></>
           : <><b>Entry: {fmt(def.entry)} ${h.coin}, burned.</b><span>{ledger.held[room.house] >= def.entry ? `You hold ${fmt(ledger.held[room.house])}.` : 'Bought on the curve for you first.'} Every round played here raises ${h.coin} for its holders.</span></>}
       </div>
+      {live && !lib && (judged
+        ? <div className="verdict on">Judged on NEAR: the contract rolls this round’s seed when you enter and replays your moves to decide the win.</div>
+        : <div className="verdict">Score on your word: the chain can’t watch this game, so a win here moves no NEAR and no favour. It counts for the seals. The burn is real either way.</div>)}
       {session.error && <div className="err">{session.error}</div>}
       {session.busy && <div className="err ok">{c.busy || 'Waiting for NEAR'}…</div>}
       {closed && <div className="go"><button className="ghost" disabled={!!c.busy} onClick={() => void buyCoin(room.house, 0.05)}>Invest 0.05 NEAR in House {h.name}</button></div>}
@@ -68,7 +73,7 @@ export function GameHud() {
       <small>{def.name}</small>
       <h2>{r.won ? 'Won' : 'Lost'}</h2>
       <p>{r.line}</p>
-      {r.won && live && <div className="entry"><b>{lib ? `+${session.payout.toFixed(3)} NEAR from the Library’s bank, paid on NEAR` : `A win for House ${h.name}, recorded on NEAR`}</b><span>{lib ? 'The contract rolled both cups and paid the bid. It counts for the Library’s seal.' : 'It counts toward the Wardens’ seals and the house’s tally of wins. The favour was your burn: at the season’s end the house with the most favour is crowned and its players share the crown pool. (The chain can’t watch the game, so a reported win pays nothing.)'}</span></div>}
+      {r.won && live && <div className="entry"><b>{lib ? `+${session.payout.toFixed(3)} NEAR from the Library’s bank, paid on NEAR` : judged ? `A win for House ${h.name}, judged on NEAR` : `A win for House ${h.name}, recorded on NEAR`}</b><span>{lib ? 'The contract rolled both cups and paid the bid. It counts for the Library’s seal.' : judged ? 'The contract replayed your moves against the seed it rolled at the door and judged the win itself. It counts toward the Wardens’ seals and the house’s tally of wins.' : 'It counts toward the Wardens’ seals and the house’s tally of wins. The favour was your burn: at the season’s end the house with the most favour is crowned and its players share the crown pool. (The chain can’t watch this game, so a reported win pays nothing.)'}</span></div>}
       {!r.won && live && <div className="entry"><b>{lib ? 'The stake goes to the Library’s bank' : `The ${h.coin} you burned still counts as favour`}</b><span>The round is closed on NEAR.</span></div>}
       {r.won && !live && <div className="entry"><b>+{session.payout} NEAR {lib ? 'from the Library’s table' : `from the treasury of House ${h.name}`}</b><span>{lib ? 'Haseeb nods. That one he’ll remember.' : `Favour with House ${h.name}: ${ledger.favour[room.house]}`}</span></div>}
       <div className="go"><button disabled={session.busy} onClick={beginRound}><kbd>E</kbd> Again ({lib ? `${live ? LIB_STAKE : def.entry} NEAR` : `${fmt(def.entry)} $${h.coin}`})</button><button className="ghost" onClick={quitGame}><kbd>Esc</kbd> Done</button></div>
