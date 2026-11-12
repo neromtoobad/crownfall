@@ -111,7 +111,12 @@ const acct = (r) => accounts.get(r.id) ?? accounts.set(r.id, new Account(r.accou
 /** Call the contract as a rival. Returns { value, tx }. */
 async function call(r, method, args, near = 0) {
   if (DRY) { console.log(`[dry] ${r.id} ${method} ${JSON.stringify(args)} ${near || ''}`); return { value: null, tx: 'dry' }; }
-  const res = await acct(r).callFunctionRaw({ contractId: CONTRACT, methodName: method, args, gas: GAS, deposit: yocto(near) });
+  let res;
+  for (let a = 0; ; a++) {
+    try { res = await acct(r).callFunctionRaw({ contractId: CONTRACT, methodName: method, args, gas: GAS, deposit: yocto(near) }); break; }
+    // A rate-limited request never reached the chain, so it is safe to send again after a pause.
+    catch (e) { if (a >= 3 || !/429|rate limit/i.test(String(e?.message ?? e))) throw e; await sleep(1500 * (a + 1) + Math.random() * 1000); }
+  }
   const tx = res?.transaction?.hash ?? res?.transaction_outcome?.id;
   const fail = res?.status?.Failure;
   if (fail) throw new Error(JSON.stringify(fail).match(/panicked: ([^"\\]+)/)?.[1] ?? 'failed');
@@ -434,9 +439,11 @@ async function decideTrade(r, ss, held, purse) {
 
 /** About every quarter hour: read the Mint, let the model choose a trade, hold it to the bounds, send it. */
 async function trade(r) {
-  const last = state.trade?.[r.id] ?? 0;
-  if (Date.now() - last < 12 * 60_000) return;
   state.trade ??= {};
+  // First run: start each rival's clock at a different point so they don't all trade in the same second.
+  state.trade[r.id] ??= Date.now() - 12 * 60_000 + Math.random() * 10 * 60_000;
+  const last = state.trade[r.id];
+  if (Date.now() - last < 12 * 60_000) return;
   state.trade[r.id] = Date.now() + Math.random() * 6 * 60_000; save();
   const [realm, me, purse] = await Promise.all([view('get_realm'), view('get_account', { account: r.account }), balance(r.account)]);
   const ss = stalls(realm), held = me.houses.map((h) => units(h.coins));
