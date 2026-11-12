@@ -21,7 +21,7 @@ const KEY_METHODS = ['enter', 'finish', 'seal', 'whip', 'call_race', 'start_race
 const GAS = '30000000000000';
 const ONE = 10n ** 24n;
 
-export interface ChainHouse { id: number; name: string; coin: string; reserve: string; supply: string; burned: string; rounds: number; entry: string; favour: string }
+export interface ChainHouse { id: number; name: string; coin: string; reserve: string; supply: string; burned: string; rounds: number; entry: string; favour: string; market?: import('./market.ts').Market }
 export interface ChainRealm { season: number; season_ends_ns: string; pool: string; races: number; houses: ChainHouse[] }
 export interface ChainMe { seals: string[]; halls_won: number[]; plays: number; wins: number; bought: boolean; raced?: boolean; houses: { coins: string; favour: string }[] }
 export interface ChainRace { n: number; seed: number; laps: number; called_ns: string; off_ns: string; started?: boolean; started_ns?: string; claimed?: string; pools: string[]; whips: [number, number][]; settled: boolean; order: number[]; finish_ms: number[]; payout: string }

@@ -37,10 +37,12 @@
 use near_sdk::json_types::U128;
 use near_sdk::serde_json::{json, Value};
 use near_sdk::store::{LookupMap, Vector};
+use market::Stall;
 use near_sdk::{
     env, ext_contract, near, require, AccountId, BorshStorageKey, Gas, NearToken, PanicOnDefault, Promise, PromiseOrValue,
 };
 
+pub mod market;
 pub mod sim;
 #[cfg(test)]
 mod tests;
@@ -430,7 +432,7 @@ impl Realm {
     }
 
     pub fn version(&self) -> String {
-        "3".into()
+        "4".into()
     }
 
     // ---------- Coin ----------
@@ -448,12 +450,29 @@ impl Realm {
         let fee = paid * FEE_BPS / 10_000;
         let to_pool = paid * FEE_POOL_BPS / 10_000;
         let net = paid - fee;
+        let now = env::block_timestamp();
+        let mut st = self.stall(h);
+        let demand = market::demand_now(&st, now);
         let g = &mut self.houses[h];
-        let got = mul_div(net, g.supply, g.reserve);
+        // Fair value × the merchant's factor (market.rs).
+        let got = mul_div(mul_div(net, g.supply, g.reserve), market::FACTOR_ONE, market::factor(demand));
         require!(got >= min_out.map(|m| m.0).unwrap_or(0), "the price moved");
         g.reserve += paid - to_pool;
         g.supply += got;
         self.pool += to_pool;
+        let reserve = g.reserve;
+        st.demand = demand + net as i128;
+        st.at_ns = now;
+        if st.shut {
+            if market::reopens(reserve, st.peak) {
+                st.shut = false;
+                st.peak = reserve;
+                event("reopened", json!({"house": house, "by": who, "reserve": U128(reserve)}));
+            }
+        } else {
+            st.peak = st.peak.max(reserve);
+        }
+        self.set_stall(h, &st);
         let mut hold = self.holding(house, &who);
         hold.coins += got;
         self.holdings.insert((house, who.clone()), hold);
@@ -471,8 +490,15 @@ impl Realm {
         let h = self.house_idx(house);
         let mut hold = self.holding(house, &who);
         require!(amount.0 > 0 && amount.0 <= hold.coins, "you don't hold that much");
+        let now = env::block_timestamp();
+        let mut st = self.stall(h);
+        require!(!st.shut, "this house is shut: a run drained its purse. Buying its coin reopens it");
+        let demand = market::demand_now(&st, now);
         let g = &mut self.houses[h];
-        let gross = mul_div(amount.0, g.reserve, g.supply);
+        // A house trading for the first time under this rule starts its peak where its purse stands.
+        st.peak = st.peak.max(g.reserve);
+        // Fair value × the merchant's factor, never above fair value (market.rs).
+        let gross = mul_div(mul_div(amount.0, g.reserve, g.supply), market::sell_factor(demand), market::FACTOR_ONE);
         let fee = gross * FEE_BPS / 10_000;
         let to_pool = gross * FEE_POOL_BPS / 10_000;
         let out = gross - fee;
@@ -480,6 +506,14 @@ impl Realm {
         g.supply -= amount.0;
         g.reserve -= out + to_pool;
         self.pool += to_pool;
+        let reserve = g.reserve;
+        st.demand = demand - gross as i128;
+        st.at_ns = now;
+        if market::breaks(reserve, st.peak) {
+            st.shut = true;
+            event("shut", json!({"house": house, "by": who, "reserve": U128(reserve)}));
+        }
+        self.set_stall(h, &st);
         hold.coins -= amount.0;
         self.holdings.insert((house, who.clone()), hold);
         event("sell", json!({"house": house, "who": who, "coins": amount, "near": U128(out)}));
@@ -495,6 +529,7 @@ impl Realm {
         let who = env::predecessor_account_id();
         let h = self.house_idx(house);
         let cost = ENTRY[h];
+        require!(!self.stall(h).shut, "this hall is shut: a run broke its house. Buying its coin at the Warwick Mint reopens it");
         self.burn(&who, h, cost, "not enough coin for the entry: buy some at the Warwick Mint");
         self.houses[h].rounds += 1;
         let id = self.open_round(&who, house, cost);
@@ -944,7 +979,7 @@ impl Realm {
     pub fn get_realm(&self) -> Value {
         let s = self.season;
         json!({
-            "version": "3",
+            "version": "4",
             "season": s,
             "season_ends_ns": U128(self.season_ends_ns as u128),
             "pool": U128(self.pool),
@@ -954,7 +989,10 @@ impl Realm {
                 "reserve": U128(g.reserve), "supply": U128(g.supply), "burned": U128(g.burned), "rounds": g.rounds,
                 "wins": g.wins, "entry": U128(ENTRY[i]),
                 "favour": U128(if g.fav_season == s { g.favour } else { 0 }),
+                "market": self.market_of(i),
             })).collect::<Vec<_>>(),
+            "rules": json!({"demand_half_secs": market::DEMAND_HALF_SECS, "depth": U128(market::DEPTH as u128),
+                "factor_min": market::FACTOR_MIN, "factor_max": market::FACTOR_MAX, "run_bps": market::RUN_BPS, "reopen_bps": market::REOPEN_BPS}),
         })
     }
 
@@ -1026,14 +1064,24 @@ impl Realm {
                     "share": U128(share), "claimed": claimed, "closed": season <= self.seasons_closed, "ended_ns": U128(s.ended_ns as u128)}))
     }
 
+    /// Coin `near` would buy now (records aside), at the merchant's price.
     pub fn quote_buy(&self, house: u8, near: U128) -> U128 {
-        let g = &self.houses[self.house_idx(house)];
-        U128(mul_div(near.0 - near.0 * FEE_BPS / 10_000, g.supply, g.reserve))
+        let h = self.house_idx(house);
+        let g = &self.houses[h];
+        let d = market::demand_now(&self.stall(h), env::block_timestamp());
+        U128(mul_div(mul_div(near.0 - near.0 * FEE_BPS / 10_000, g.supply, g.reserve), market::FACTOR_ONE, market::factor(d)))
     }
 
+    /// NEAR `coins` would sell for now (0 while the house is shut).
     pub fn quote_sell(&self, house: u8, coins: U128) -> U128 {
-        let g = &self.houses[self.house_idx(house)];
-        let gross = mul_div(coins.0, g.reserve, g.supply);
+        let h = self.house_idx(house);
+        let g = &self.houses[h];
+        let st = self.stall(h);
+        if st.shut {
+            return U128(0);
+        }
+        let d = market::demand_now(&st, env::block_timestamp());
+        let gross = mul_div(mul_div(coins.0, g.reserve, g.supply), market::sell_factor(d), market::FACTOR_ONE);
         U128(gross - gross * FEE_BPS / 10_000)
     }
 
@@ -1177,6 +1225,22 @@ impl Realm {
         }
         mt_event("mt_transfer", e);
         ids
+    }
+    /// A merchant's stall (market.rs), in raw storage beside the realm's state.
+    pub(crate) fn stall(&self, h: usize) -> Stall {
+        env::storage_read(&[b"mkt:".as_slice(), &[h as u8]].concat())
+            .map(|b| near_sdk::borsh::from_slice(&b).unwrap())
+            .unwrap_or_default()
+    }
+    fn set_stall(&mut self, h: usize, st: &Stall) {
+        env::storage_write(&[b"mkt:".as_slice(), &[h as u8]].concat(), &near_sdk::borsh::to_vec(st).unwrap());
+    }
+    /// What the merchant is doing now: demand, its buy and sell factors, and whether it's shut.
+    fn market_of(&self, h: usize) -> Value {
+        let st = self.stall(h);
+        let d = market::demand_now(&st, env::block_timestamp());
+        json!({"demand": d.to_string(), "factor": market::factor(d), "sell_factor": market::sell_factor(d), "shut": st.shut,
+               "peak": U128(st.peak.max(self.houses[h].reserve))})
     }
     fn bank(&self) -> u128 {
         env::storage_read(LIB_BANK).map(|b| u128::from_le_bytes(b.try_into().unwrap())).unwrap_or(0)

@@ -6,7 +6,7 @@ import { TOUCH, usePlay } from '../realm/play.ts';
 import { beginRound, gameDef, quitGame, session } from './host.ts';
 import { sigilURL } from '../realm/sigils.ts';
 import { useMemo } from 'react';
-import { LIB_STAKE, buyCoin, held } from '../chain/game.ts';
+import { LIB_STAKE, buyCoin, held, quoteOf } from '../chain/game.ts';
 import { onChain, signsHere, useChain } from '../chain/near.ts';
 
 export function GameHud() {
@@ -18,6 +18,8 @@ export function GameHud() {
   if (!p.game || !room || !def) return null;
   const h = hallHouse(room.house), lib = room.house === LIBRARY;
   const live = onChain(), short = live && !lib && held(room.house) < def.entry;
+  // A run broke the house: its hall takes no rounds until purchases bring its purse back (market.rs).
+  const q = live && !lib ? quoteOf(room.house) : undefined, closed = !!q?.shut;
   const style = { ['--c' as string]: h.colors[0], ['--c2' as string]: h.colors[1] };
   if (session.phase === 'play') return (
     <>
@@ -43,6 +45,8 @@ export function GameHud() {
         {live
           ? (lib
             ? <><b>Stake: {LIB_STAKE} NEAR on the table, on NEAR.</b><span>{signsHere() ? 'It signs from your NEAR account here.' : 'Your wallet asks for it.'} The contract rolls your five dice from that block; you make one bid, and Haseeb’s five are rolled from the block that takes it. A true bid pays fair odds less 5% from the Library’s bank; a short one goes to the bank. No browser can report this win.</span></>
+            : closed
+            ? <><b>The hall is shut. House {h.name} went broke.</b><span>A run of selling drained its purse to {q!.reserve.toFixed(3)} NEAR, under 70% of its peak. Buying ${h.coin} invests in it, and the hall reopens once the purse is back to {q!.reopenAt.toFixed(3)} NEAR. It sells at ×{q!.factor.toFixed(2)} fair value right now.</span></>
             : <><b>Entry: {fmt(def.entry)} ${h.coin}, burned on NEAR.</b><span>{short ? `You hold ${fmt(held(room.house))}: buy some first.` : `You hold ${fmt(held(room.house))}.`} The burn raises ${h.coin} for every holder and counts as favour with House {h.name}.</span></>)
           : lib
           ? (session.free ? <><b>Haseeb stands you the first game.</b><span>Win it and he pays you {def.entry} NEAR. After this the stake is {def.entry} NEAR: a win hands it back.</span></> : <><b>Stake: {def.entry} NEAR on the table.</b><span>Win and it comes back to you. Lose and Haseeb keeps it.</span></>)
@@ -52,8 +56,9 @@ export function GameHud() {
       </div>
       {session.error && <div className="err">{session.error}</div>}
       {session.busy && <div className="err ok">{c.busy || 'Waiting for NEAR'}…</div>}
-      {short && <div className="go"><button className="ghost" disabled={!!c.busy} onClick={() => void buyCoin(room.house, 0.05)}>Buy 0.05 NEAR of ${h.coin}</button></div>}
-      <div className="go"><button disabled={session.busy || short} onClick={beginRound}><kbd>E</kbd> Play</button><button className="ghost" onClick={quitGame}><kbd>Esc</kbd> Not now</button></div>
+      {closed && <div className="go"><button className="ghost" disabled={!!c.busy} onClick={() => void buyCoin(room.house, 0.05)}>Invest 0.05 NEAR in House {h.name}</button></div>}
+      {short && !closed && <div className="go"><button className="ghost" disabled={!!c.busy} onClick={() => void buyCoin(room.house, 0.05)}>Buy 0.05 NEAR of ${h.coin}</button></div>}
+      <div className="go"><button disabled={session.busy || short || closed} onClick={beginRound}><kbd>E</kbd> Play</button><button className="ghost" onClick={quitGame}><kbd>Esc</kbd> Not now</button></div>
     </div>
   );
   const r = session.result!;

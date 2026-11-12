@@ -56,7 +56,7 @@ export const me = {
 if (import.meta.env.DEV) Object.assign(window, { __me: me });
 
 const subs = new Set<() => void>();
-if (import.meta.env.DEV) Object.assign(window, { __play: play });
+if (import.meta.env.DEV) Object.assign(window, { __play: play, __openPanel: (p?: Prompt) => openPanel(p) });
 export function emitPlay() { play.version++; subs.forEach((f) => f()); }
 export function usePlay() {
   useSyncExternalStore((f) => { subs.add(f); return () => subs.delete(f); }, () => play.version);

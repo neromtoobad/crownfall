@@ -1,13 +1,22 @@
 // What the game asks of the purse, on chain when a wallet is connected and on the practice purse otherwise.
 import { HOUSES } from '../realm/layout.ts';
 import { buy as practiceBuy, fmt, ledger, note, priceAt, sell as practiceSell } from '../realm/ledger.ts';
-import { chain, keyCall, onChain, priceOf, units, view, walletCall, yocto } from './near.ts';
+import { chain, keyCall, onChain, units, view, walletCall, yocto } from './near.ts';
+import { quote, type Quote } from './market.ts';
 
 export const held = (h: number) => (onChain() ? units(chain.me?.houses[h]?.coins) : ledger.held[h]);
+/** What one coin costs to buy now: on chain, the merchant's price (market.ts); in practice, the practice curve. */
 export const price = (h: number) => {
   const x = chain.realm?.houses[h];
-  return onChain() && x ? priceOf(x) : priceAt(ledger.supply[h]);
+  return onChain() && x ? quote(x).buy : priceAt(ledger.supply[h]);
 };
+/** The merchant's whole quote for a house (on chain only): fair value, buy and sell prices, demand, shut, and why. */
+export const quoteOf = (h: number): Quote | undefined => {
+  const x = chain.realm?.houses[h];
+  return onChain() && x ? quote(x) : undefined;
+};
+/** Is this house shut by a run (on chain)? Its hall takes no rounds and it buys no coin back until someone buys in. */
+export const shut = (h: number) => !!quoteOf(h)?.shut;
 export const supply = (h: number) => (onChain() && chain.realm ? units(chain.realm.houses[h].supply) : ledger.supply[h]);
 export const burned = (h: number) => (chain.realm ? units(chain.realm.houses[h].burned) : 0);
 export const favour = (h: number) => (onChain() ? units(chain.me?.houses[h]?.favour) : ledger.favour[h] ?? 0);

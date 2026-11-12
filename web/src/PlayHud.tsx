@@ -17,7 +17,7 @@ import { Fade, SealBar, SealGlyph } from './StoryHud.tsx';
 import { MISSIONS, WARDENS, nextHint, story } from './realm/missions.ts';
 import { ROOMS } from './realm/rooms.ts';
 import { ChainBar } from './chain/ChainBar.tsx';
-import { buyCoin, burned, claimCrown, crownOf, endSeason, favour, held, price, sellCoin, supply, type Crown } from './chain/game.ts';
+import { buyCoin, burned, claimCrown, crownOf, endSeason, favour, held, price, quoteOf, sellCoin, supply, type Crown } from './chain/game.ts';
 import { CONTRACT, EXPLORER, ensureKey, onChain, openSignIn, signsHere, units, useChain } from './chain/near.ts';
 import { SignIn } from './chain/SignIn.tsx';
 
@@ -195,22 +195,34 @@ function MintPanel() {
   const n = Number(amt) || 0;
   const live = onChain();
   const purse = live ? c.balance : ledger.near;
+  const q = quoteOf(h);
+  const [why, setWhy] = useState(false);
   return (
     <>
       <div className="eyebrow">The Warwick Mint · {live ? 'on NEAR testnet' : 'practice purse'}</div>
       <h2>Buy and sell house coin</h2>
-      <p className="lede">A house coin is worth its house’s NEAR reserve divided by its supply. Every round played in a hall burns coin, so the price only climbs while people play. A 5% fee on each trade: 3 points stay in the reserve, 2 go to the crown pool.</p>
+      <p className="lede">{live
+        ? 'Each house is a merchant: its coin is worth a share of its NEAR purse, and it asks more when buyers rush in and pays less when sellers flood it. Every round played in a hall burns coin, which raises every holder’s share.'
+        : 'A house coin is worth its house’s NEAR reserve divided by its supply. Every round played in a hall burns coin, so the price only climbs while people play. A 5% fee on each trade: 3 points stay in the reserve, 2 go to the crown pool.'}</p>
       <div className="chips">{HOUSES.map((y) => <button key={y.id} className={y.id === h ? 'on' : ''} onClick={() => setH(y.id)}>${y.coin}</button>)}</div>
       <dl className="stats">
-        <div><dt>Price</dt><dd>{price(h).toPrecision(3)} NEAR</dd></div>
+        {q ? <>
+          <div title={q.why.join('\n')}><dt>Buy at</dt><dd>{q.buy.toPrecision(3)} NEAR{q.factor !== 1 && <small className={q.factor > 1 ? 'up' : 'down'}> ×{q.factor.toFixed(2)}</small>}</dd></div>
+          <div title={q.why.join('\n')}><dt>Sell at</dt><dd>{q.shut ? 'shut' : <>{q.sell.toPrecision(3)} NEAR{q.sellFactor !== 1 && <small className="down"> ×{q.sellFactor.toFixed(2)}</small>}</>}</dd></div>
+        </> : <div><dt>Price</dt><dd>{price(h).toPrecision(3)} NEAR</dd></div>}
         <div><dt>Supply</dt><dd>{fmt(supply(h))}</dd></div>
         {live && <div><dt>Burned</dt><dd>{fmt(burned(h))}</dd></div>}
         <div><dt>You hold</dt><dd>{fmt(held(h))} ${x.coin}</dd></div>
       </dl>
+      {q && <div className={`merchant${q.shut ? ' shut' : ''}`}>
+        {q.shut && <b>House {x.name} is shut. A run drained its purse to {q.reserve.toFixed(3)} NEAR. Buying ${x.coin} invests in it: the hall reopens at {q.reopenAt.toFixed(3)} NEAR.</b>}
+        <button className="link" onClick={() => setWhy(!why)}>{why ? 'Hide' : 'Why this price?'}</button>
+        {why && <ul>{q.why.map((w) => <li key={w}>{w}</li>)}</ul>}
+      </div>}
       <div className="trade">
         <input value={amt} inputMode="decimal" onChange={(e) => setAmt(e.target.value)} aria-label="NEAR to spend" />
-        <button className="go" disabled={n <= 0 || n > purse || !!c.busy} onClick={() => void buyCoin(h, n)}>Buy with {n || 0} NEAR</button>
-        <button className="ghost" disabled={held(h) <= 0 || !!c.busy} onClick={() => void sellCoin(h, held(h) / 2)}>Sell half</button>
+        <button className="go" disabled={n <= 0 || n > purse || !!c.busy} onClick={() => void buyCoin(h, n)}>{q?.shut ? 'Invest' : 'Buy with'} {n || 0} NEAR</button>
+        <button className="ghost" disabled={held(h) <= 0 || !!c.busy || !!q?.shut} onClick={() => void sellCoin(h, held(h) / 2)}>Sell half</button>
       </div>
       {live
         ? <p className="honest">Live on NEAR testnet: <a href={`${EXPLORER}/address/${CONTRACT}`} target="_blank" rel="noreferrer">{CONTRACT}</a>. {signsHere() ? 'Buying, selling and hall rounds all sign in this browser.' : 'Buying asks your wallet; selling and hall rounds use the game key.'}</p>

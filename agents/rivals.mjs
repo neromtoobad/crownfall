@@ -329,6 +329,7 @@ async function tribute(r) {
  *  each rival sworn to the crowned house takes its share. Without this a season nobody ends just stands still. */
 async function season() {
   const realm = await view('get_realm');
+  for (const r of RIVALS) await once(`rescue:${r.id}`, () => rescue(r, realm));
   const steward = RIVALS.find((x) => x.steward);
   if (BigInt(Date.now()) * 1_000_000n >= BigInt(realm.season_ends_ns)) {
     try {
@@ -350,6 +351,20 @@ async function season() {
       log({ who: r.id, kind: 'crown-claim', house: c.crowned, near: Math.round(units(c.share) * 1000) / 1000, why: `takes its share of season ${last}'s crown pool`, tx });
     } catch (e) { log({ who: r.id, kind: 'error', error: `claim_crown: ${e.message}` }); }
   }
+}
+
+/** A rival whose own house is shut by a run (market.rs) buys in to reopen it, a little at a time, and says so. */
+async function rescue(r, realm) {
+  const g = realm.houses[r.house];
+  if (!g.market?.shut) return;
+  const purse = await balance(r.account);
+  if (purse < 0.6) return; // keep enough for its own bets and gas
+  const stake = Math.min(0.05, r.max);
+  try {
+    const { tx } = await call(r, 'buy', { house: r.house }, stake);
+    log({ who: r.id, kind: 'invest', house: r.house, near: stake,
+      why: `House ${HOUSES[r.house]} is shut after a run; I buy in to help reopen it (purse ${units(g.reserve).toFixed(3)} NEAR, needs 85% of its ${units(g.market.peak).toFixed(3)} peak)`, tx });
+  } catch (e) { log({ who: r.id, kind: 'error', error: `invest: ${e.message}` }); }
 }
 
 // ---------- The feed ----------
