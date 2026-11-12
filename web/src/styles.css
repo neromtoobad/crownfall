@@ -728,5 +728,5 @@ html.touch .race-soon b { font-size: 12px; }
 .judge li.done b { color: #9fe39f; }
 .judge li button { align-self: flex-start; margin-top: 2px; padding: 5px 10px; border-radius: 6px; border: 1px solid #000; background: #e8b53a; color: #1a130c; font: 600 12px/1 var(--sans); cursor: pointer; }
 .judge li button:disabled { opacity: 0.5; cursor: default; }
-html.touch .judge { right: auto; left: calc(var(--sl, 12px) + 50px); top: calc(var(--st, 28px) + 44px); width: 260px; max-height: calc(100% - 130px); }
+html.touch .judge { right: auto; left: calc(var(--sl, 12px) + 50px); top: calc(var(--st, 28px) + 72px); width: 260px; max-height: calc(100% - 100px); }
 html.touch .judge.shut { width: auto; }

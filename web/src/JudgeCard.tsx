@@ -3,7 +3,7 @@
 // tests it, and what should happen; it ticks itself from the contract's own view of your account, and every line
 // links to the account on the explorer, where each transaction it made is listed.
 import { useEffect, useState } from 'react';
-import { openPanel, play, usePlay } from './realm/play.ts';
+import { TOUCH, openPanel, usePlay } from './realm/play.ts';
 import { HOUSES } from './realm/layout.ts';
 import { STABLES } from './realm/places.ts';
 import { doorOf } from './realm/rooms.ts';
@@ -32,7 +32,8 @@ export function JudgeCard() {
   const p = usePlay();
   const c = useChain();
   const [busy, setBusy] = useState('');
-  const [open, setOpen] = useState(true);
+  // On a phone it starts folded to one line, so it doesn't sit on the thumb stick.
+  const [open, setOpen] = useState(!TOUCH);
   const [burnAt, setBurnAt] = useState<number>();
   useEffect(() => { void seatJudge(setBusy); }, []);
 
