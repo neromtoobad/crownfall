@@ -21,6 +21,7 @@ import { ChainBar } from './chain/ChainBar.tsx';
 import { buyCoin, burned, claimCrown, crownOf, endSeason, favour, held, price, quoteOf, sellCoin, supply, type Crown } from './chain/game.ts';
 import { CONTRACT, EXPLORER, ensureKey, onChain, openSignIn, signsHere, units, useChain } from './chain/near.ts';
 import { SignIn } from './chain/SignIn.tsx';
+import { JUDGE, JudgeCard } from './JudgeCard.tsx';
 import { WeekPanel } from './WeekPanel.tsx';
 import { musicOn, setMusic } from './realm/music.ts';
 import './realm/cues.ts'; // doors, pages, clicks and the Mint clerk follow play from here
@@ -33,6 +34,7 @@ export function PlayHud() {
     <>
       {p.picking && <SeatPicker />}
       {c.signingIn && <SignIn suggest={c.signInHint || play.seat?.name} />}
+      {JUDGE && <JudgeCard />}
       {p.mode === 'play' && p.seat && !p.picking && (
         <>
           {p.racing && <DriveHud />}

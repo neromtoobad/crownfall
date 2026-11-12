@@ -37,6 +37,23 @@ const loadGsi = () => (gsi ??= new Promise<void>((ok, no) => {
   document.head.appendChild(s);
 }));
 
+/** Make a lord from a name, with a key made in this browser: the name flow below, and the judge seat (JudgeCard.tsx). */
+export async function lordByName(name: string, onBusy: (s: string) => void = () => {}) {
+  const cfg = await config();
+  if (!cfg.parent) throw new Error('the sign-in service has no parent account');
+  if (cfg.open === false) throw new Error('the purse for new lords is empty right now');
+  const account = `${slug(name)}.${cfg.parent}`;
+  const { KeyPair } = await import('near-api-js');
+  const kp = KeyPair.fromRandom('ed25519');
+  const pk = kp.getPublicKey().toString();
+  onBusy('Sealing your name…');
+  const nonce = await work(account, pk, cfg.pow);
+  onBusy('Making your lord on NEAR…');
+  const out = await post({ via: 'name', name: slug(name), publicKey: pk, nonce });
+  await signInLord(out.account, kp.toString() as KeyPairString, 'name');
+  return out.account;
+}
+
 export function SignIn({ suggest = '' }: { suggest?: string }) {
   const c = useChain();
   const [cfg, setCfg] = useState<Cfg>();
@@ -69,15 +86,9 @@ export function SignIn({ suggest = '' }: { suggest?: string }) {
   const account = cfg?.parent && slug(name).length >= 2 ? `${slug(name)}.${cfg.parent}` : '';
   const byName = async () => {
     if (!account || !cfg) return;
-    setErr(''); setBusy('Sealing your name…');
+    setErr('');
     try {
-      const { KeyPair } = await import('near-api-js');
-      const kp = KeyPair.fromRandom('ed25519');
-      const pk = kp.getPublicKey().toString();
-      const nonce = await work(account, pk, cfg.pow);
-      setBusy('Making your lord on NEAR…');
-      const out = await post({ via: 'name', name: slug(name), publicKey: pk, nonce });
-      await signInLord(out.account, kp.toString(), 'name');
+      await lordByName(name, setBusy);
     } catch (e) { setErr((e as Error).message); } finally { setBusy(''); }
   };
   const wallet = () => { closeSignIn(); void connect(); };

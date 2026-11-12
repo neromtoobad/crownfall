@@ -707,3 +707,26 @@ html.touch .race-soon { left: auto; right: var(--sr, 12px); bottom: auto; top: c
 html.touch .race-soon i { width: 18px; height: 18px; font-size: 9px; }
 html.touch .race-soon em { display: none; }
 html.touch .race-soon b { font-size: 12px; }
+
+/* The judge's seat (?judge): a checklist card under the radar on the right. */
+.judge { z-index: 33; position: absolute; right: 22px; top: 96px; width: 300px; max-height: calc(100% - 200px); overflow-y: auto; padding: 0 0 10px;
+  background: rgba(14, 10, 7, 0.86); border: 1px solid rgba(232, 181, 58, 0.55); border-radius: 10px; backdrop-filter: blur(8px);
+  font: 12px/1.4 var(--sans); color: var(--ink-2); }
+.judge.shut { padding: 0; }
+.judge-head { all: unset; cursor: pointer; display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; padding: 9px 12px; }
+.judge-head b { flex: 1; font: 600 14px/1 var(--serif); color: #f6e7c4; }
+.judge-head span { font: 600 12px/1 var(--sans); color: #e8b53a; font-variant-numeric: tabular-nums; }
+.judge-head i { font-style: normal; color: #f6e7c4; width: 12px; text-align: center; }
+.judge a { color: #f0c862; }
+.judge-acct, .judge-foot { margin: 0 12px 8px; }
+.judge-foot { margin-top: 8px; font-size: 11px; opacity: 0.8; }
+.judge ol { margin: 0; padding: 0 12px; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.judge li { padding: 8px 10px; border: 1px solid rgba(246, 231, 196, 0.16); border-radius: 8px; display: flex; flex-direction: column; gap: 4px; }
+.judge li b { font: 600 13px/1.25 var(--sans); color: #f6e7c4; }
+.judge li em { font-style: normal; color: #e8b53a; }
+.judge li.done { border-color: rgba(120, 200, 120, 0.6); }
+.judge li.done b { color: #9fe39f; }
+.judge li button { align-self: flex-start; margin-top: 2px; padding: 5px 10px; border-radius: 6px; border: 1px solid #000; background: #e8b53a; color: #1a130c; font: 600 12px/1 var(--sans); cursor: pointer; }
+.judge li button:disabled { opacity: 0.5; cursor: default; }
+html.touch .judge { right: auto; left: calc(var(--sl, 12px) + 50px); top: calc(var(--st, 28px) + 44px); width: 260px; max-height: calc(100% - 130px); }
+html.touch .judge.shut { width: auto; }
