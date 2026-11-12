@@ -9,6 +9,10 @@
 //     with `preview_race`, with and without one more whip, and cracks its whip only where it gains a place.
 //   - They keep the races going: one of them calls the next race, starts it at the off and settles it, so the track
 //     runs on chain when no human is watching. Winners collect.
+//   - They trade at the Warwick Mint. About every quarter hour each rival reads the eight merchants (fair value,
+//     the buy and sell factors, how full each purse is against its peak, whether it's shut) and its own coin, and its
+//     model decides to buy, sell or hold, in character. It is held to small trades, keeps the coin it needs for whips
+//     and tributes, and never sells a house's purse down toward a run: no rival can shut a hall by itself.
 //   - Now and then each pays tribute: one round's entry burned in its house's hall, favour for the house in the
 //     race for the Ashen Throne. They close those rounds as lost: the chain can't see a game, and they don't claim
 //     wins they didn't play.
@@ -44,14 +48,18 @@ const CUPS = ['The Polosukhin Cup', 'The Warwick Purse', 'The Garg Stakes', 'The
 const BET_SECS = 90, WHIP_SECS = 40, WHIP_COINS = 200, ENTRY = 400;
 
 export const RIVALS = [
-  { id: 'odo', account: 'cf-odo-vael.testnet', name: 'Ser Odo Vane', house: 3, max: 0.3, steward: true,
-    style: 'a loyalist of House Thorne: you back Thorne nearly every race, bet more when the crowd has left Thorne long, and you whip hard for it' },
-  { id: 'isolde', account: 'cf-isolde-vael.testnet', name: 'Lady Isolde Marr', house: 6, max: 0.25,
-    style: 'an odds-reader of House Marrow: since every team has the same chance, you back the team whose pool pays most per NEAR, never one the crowd has already crowded' },
+  { id: 'odo', account: 'cf-odo-vael.testnet', name: 'Ser Odo Vane', house: 3, max: 0.1, steward: true,
+    style: 'a loyalist of House Thorne: you back Thorne nearly every race, bet more when the crowd has left Thorne long, and you whip hard for it',
+    trades: 'you buy Thorne whenever it is cheap or under pressure and never sell it; another coin you hold you sell once a rush makes it dear' },
+  { id: 'isolde', account: 'cf-isolde-vael.testnet', name: 'Lady Isolde Marr', house: 6, max: 0.12,
+    style: 'an odds-reader of House Marrow: since every team has the same chance, you back the team whose pool pays most per NEAR, never one the crowd has already crowded',
+    trades: 'a value trader: you buy the coin selling furthest below its fair value and sell what you hold when a rush lifts its sell price up to fair value' },
   { id: 'bram', account: 'cf-bram-vael.testnet', name: 'Old Bram of Halloway', house: 4, max: 0.08,
-    style: 'a cautious old hand of House Halloway: small stakes only, you sit a race out when nothing looks good, and you never chase a loss' },
-  { id: 'nell', account: 'cf-nell-vael.testnet', name: 'Nell the Fox', house: 7, max: 0.2,
-    style: 'a contrarian of House Sorrel: you never back the team the crowd backs; you take the emptiest pool, because a thin pool pays fat' },
+    style: 'a cautious old hand of House Halloway: small stakes only, you sit a race out when nothing looks good, and you never chase a loss',
+    trades: 'you add a little Halloway when it trades below fair value and otherwise hold; you sell only to take a clear profit' },
+  { id: 'nell', account: 'cf-nell-vael.testnet', name: 'Nell the Fox', house: 7, max: 0.1,
+    style: 'a contrarian of House Sorrel: you never back the team the crowd backs; you take the emptiest pool, because a thin pool pays fat',
+    trades: 'a contrarian: you buy the coin everyone has been selling and sell into whichever house the crowd is rushing' },
 ];
 const MIN_STAKE = 0.02;
 
@@ -367,6 +375,93 @@ async function rescue(r, realm) {
   } catch (e) { log({ who: r.id, kind: 'error', error: `invest: ${e.message}` }); }
 }
 
+// ---------- Trading at the Mint ----------
+
+const TRADE_MIN = 0.02, TRADE_MAX = 0.06, PURSE_KEEP = 1, SAFE_BPS = 0.85; // never sell a purse below 85% of its peak
+/** The eight merchants as a rival sees them: prices per 10,000 coin, factors, purse against peak. */
+function stalls(realm) {
+  return realm.houses.map((g, i) => {
+    const reserve = units(g.reserve), supply = units(g.supply), peak = Math.max(units(g.market?.peak), reserve);
+    const fair = supply > 0 ? (reserve / supply) * 10_000 : 0;
+    return { i, reserve, supply, peak, fair, buy: (fair * (g.market?.factor ?? 10_000)) / 10_000, sell: (fair * (g.market?.sell_factor ?? 10_000)) / 10_000,
+      factor: (g.market?.factor ?? 10_000) / 10_000, full: peak > 0 ? reserve / peak : 1, shut: !!g.market?.shut };
+  });
+}
+/** Most coin a rival may sell into house i without bringing its purse near a run, and what's left for whips/tributes. */
+function sellable(r, st, coins) {
+  if (st.shut || (r.id === 'odo' && st.i === r.house)) return 0;
+  const keep = st.i === r.house ? ENTRY + 3 * WHIP_COINS : 0;
+  const room = Math.max(0, st.reserve - SAFE_BPS * st.peak); // NEAR the purse can pay out and stay safe
+  const byValue = Math.min(TRADE_MAX, room) / Math.max(st.sell / 10_000, 1e-12);
+  return Math.max(0, Math.floor(Math.min(coins - keep, byValue)));
+}
+
+async function decideTrade(r, ss, held, purse) {
+  const book = ss.map((x) => `${x.i} ${HOUSES[x.i]} ($${TICKERS[x.i]}): fair ${x.fair.toPrecision(3)}, buy ${x.buy.toPrecision(3)} (x${x.factor.toFixed(2)}), sell ${x.sell.toPrecision(3)}, purse ${x.reserve.toFixed(3)} NEAR at ${(x.full * 100).toFixed(0)}% of peak${x.shut ? ', SHUT after a run' : ''}; you hold ${Math.floor(held[x.i])} (may sell up to ${sellable(r, x, held[x.i])})`).join('\n');
+  const fallback = (why) => {
+    // Each rival's fixed rule: buy its own house when it is at or below fair value, else hold.
+    const own = ss[r.house];
+    if (own.factor <= 1 && purse - TRADE_MIN > PURSE_KEEP) return { action: 'buy', house: r.house, near: TRADE_MIN, why: `${why}; my rule: ${HOUSES[r.house]} is at or under fair value, so I add a little`, by: 'rule' };
+    return { action: 'hold', why: `${why}; my rule says hold`, by: 'rule' };
+  };
+  if (!KEY()) return fallback('no model key on this server');
+  const system =
+    `You are ${r.name}, a rival player in Crownfall, a realm of eight houses on NEAR. Each house sells its own coin at the Warwick Mint like a merchant: ` +
+    'fair value is its NEAR purse divided by its coin supply; recent buying raises the buy factor (up to x1.5) and recent selling lowers it (down to x0.7); ' +
+    'a seller never gets more than fair value; a 5% fee is taken on every trade; when selling drains a purse to 70% of its peak the house is shut until buyers bring it back. ' +
+    `Holding a house's coin lets you play its hall and whip its team. As a trader you are ${r.trades}. ` +
+    `Trades are ${TRADE_MIN} to ${TRADE_MAX} NEAR. Answer with JSON only: {"action": "buy"|"sell"|"hold", "house": <0-7>, "near": <NEAR to spend, or NEAR worth of coin to sell>, "why": "<one short sentence, first person, in character>"}.`;
+  const prompt = `Prices per 10,000 coin, in NEAR:\n${book}\nYour purse: ${purse.toFixed(2)} NEAR (you keep ${PURSE_KEEP} NEAR back). Your house: ${HOUSES[r.house]}.`;
+  try {
+    const res = await fetch(`${NEARAI}/chat/completions`, {
+      method: 'POST', headers: { authorization: `Bearer ${KEY()}`, 'content-type': 'application/json' }, signal: AbortSignal.timeout(20_000),
+      body: JSON.stringify({ model: MODEL, max_tokens: 140, temperature: 0.7, response_format: { type: 'json_object' },
+        messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
+        ...(MODEL.startsWith('deepseek-ai/') ? { chat_template_kwargs: { thinking: false } } : {}) }),
+    });
+    if (!res.ok) return fallback(`my model was busy (${res.status})`);
+    const data = await res.json();
+    const ans = JSON.parse(String(data?.choices?.[0]?.message?.content ?? '{}').match(/\{[\s\S]*\}/)?.[0] ?? '{}');
+    const why = String(ans.why ?? '').replace(/\s+/g, ' ').trim().slice(0, 160) || 'no reason given';
+    const house = Number(ans.house), near = Number(ans.near);
+    if (ans.action === 'hold' || !['buy', 'sell'].includes(ans.action)) return { action: 'hold', why, by: 'model' };
+    if (!Number.isInteger(house) || house < 0 || house > 7) return fallback('my model named no house');
+    return { action: ans.action, house, near: Number.isFinite(near) ? near : TRADE_MIN, why, by: 'model' };
+  } catch (e) {
+    return fallback(`my model call failed (${String(e?.message ?? e).slice(0, 40)})`);
+  }
+}
+
+/** About every quarter hour: read the Mint, let the model choose a trade, hold it to the bounds, send it. */
+async function trade(r) {
+  const last = state.trade?.[r.id] ?? 0;
+  if (Date.now() - last < 12 * 60_000) return;
+  state.trade ??= {};
+  state.trade[r.id] = Date.now() + Math.random() * 6 * 60_000; save();
+  const [realm, me, purse] = await Promise.all([view('get_realm'), view('get_account', { account: r.account }), balance(r.account)]);
+  const ss = stalls(realm), held = me.houses.map((h) => units(h.coins));
+  const d = await decideTrade(r, ss, held, purse);
+  if (d.action === 'hold') { log({ who: r.id, kind: 'hold', why: d.why, by: d.by }); return; }
+  const st = ss[d.house];
+  try {
+    if (d.action === 'buy') {
+      const near = Math.round(Math.min(TRADE_MAX, Math.max(TRADE_MIN, d.near), purse - PURSE_KEEP) * 1000) / 1000;
+      if (near < TRADE_MIN) { log({ who: r.id, kind: 'hold', why: `${d.why} (my purse is too thin to trade)`, by: d.by }); return; }
+      const { value, tx } = await call(r, 'buy', { house: d.house }, near);
+      const got = value ? Math.round(units(value)) : undefined;
+      log({ who: r.id, kind: 'buy', house: d.house, near, why: `${d.why}${got ? ` (got ${got.toLocaleString('en-GB')} $${TICKERS[d.house]})` : ''}`, by: d.by, tx });
+    } else {
+      const max = sellable(r, st, held[d.house]);
+      const want = Math.floor(Math.min(max, (Math.max(TRADE_MIN, d.near) / Math.max(st.sell / 10_000, 1e-12))));
+      if (want < 1 || (want * st.sell) / 10_000 < 0.005) { log({ who: r.id, kind: 'hold', house: d.house, why: `${d.why} (held back: ${st.shut ? 'the house is shut' : max < 1 ? 'nothing I may sell there without risking a run' : 'too small to trade'})`, by: d.by }); return; }
+      const q = units(await view('quote_sell', { house: d.house, coins: (BigInt(want) * ONE).toString() }));
+      if (st.reserve - q < SAFE_BPS * st.peak) { log({ who: r.id, kind: 'hold', house: d.house, why: `${d.why} (held back: selling would bring the purse near a run)`, by: d.by }); return; }
+      const { tx } = await call(r, 'sell', { house: d.house, amount: (BigInt(want) * ONE).toString(), min_out: ((yocto(q) * 97n) / 100n).toString() });
+      log({ who: r.id, kind: 'sell', house: d.house, near: Math.round(q * 1000) / 1000, why: `${d.why} (sold ${want.toLocaleString('en-GB')} $${TICKERS[d.house]})`, by: d.by, tx });
+    }
+  } catch (e) { log({ who: r.id, kind: 'error', house: d.house, error: `${d.action}: ${e.message}` }); }
+}
+
 // ---------- The feed ----------
 
 const purses = new Map();
@@ -394,6 +489,7 @@ async function loop() {
   if (ticks++ % 15 === 0) {
     void refreshPurses(); void once('season', () => season());
     for (const r of RIVALS) void once(`tribute:${r.id}`, () => tribute(r));
+    for (const r of RIVALS) void once(`trade:${r.id}`, () => trade(r));
   }
   setTimeout(loop, 2000);
 }
