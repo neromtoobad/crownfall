@@ -325,6 +325,33 @@ async function tribute(r) {
   } catch (e) { log({ who: r.id, kind: 'error', error: `tribute: ${e.message}` }); }
 }
 
+/** The Ashen Throne: once a season is due, the steward ends it (anyone may: `end_season` takes no permission), and
+ *  each rival sworn to the crowned house takes its share. Without this a season nobody ends just stands still. */
+async function season() {
+  const realm = await view('get_realm');
+  const steward = RIVALS.find((x) => x.steward);
+  if (BigInt(Date.now()) * 1_000_000n >= BigInt(realm.season_ends_ns)) {
+    try {
+      const { value, tx } = await call(steward, 'end_season', {});
+      log({ who: steward.id, kind: 'crown', house: value, why: value === null || value === undefined
+        ? `season ${realm.season} ends with no favour burned; no house is crowned and the pool carries over`
+        : `season ${realm.season} is over: House ${HOUSES[value]} burned the most coin and takes the Ashen Throne`, tx });
+    } catch (e) { if (!/isn't over/.test(e.message)) log({ who: steward.id, kind: 'error', error: `end_season: ${e.message}` }); }
+    return;
+  }
+  // Collect on the season before, while its claims are open.
+  const last = realm.season - 1;
+  if (last < 1) return;
+  for (const r of RIVALS) {
+    const c = await view('get_crown', { season: last, account: r.account });
+    if (!c || c.claimed || c.closed || !(units(c.share) > 0)) continue;
+    try {
+      const { tx } = await call(r, 'claim_crown', { season: last });
+      log({ who: r.id, kind: 'crown-claim', house: c.crowned, near: Math.round(units(c.share) * 1000) / 1000, why: `takes its share of season ${last}'s crown pool`, tx });
+    } catch (e) { log({ who: r.id, kind: 'error', error: `claim_crown: ${e.message}` }); }
+  }
+}
+
 // ---------- The feed ----------
 
 const purses = new Map();
@@ -349,7 +376,10 @@ createServer((req, res) => {
 let ticks = 0;
 async function loop() {
   try { await step(); } catch (e) { console.warn('[step]', String(e?.message ?? e).slice(0, 160)); }
-  if (ticks++ % 15 === 0) { void refreshPurses(); for (const r of RIVALS) void once(`tribute:${r.id}`, () => tribute(r)); }
+  if (ticks++ % 15 === 0) {
+    void refreshPurses(); void once('season', () => season());
+    for (const r of RIVALS) void once(`tribute:${r.id}`, () => tribute(r));
+  }
   setTimeout(loop, 2000);
 }
 process.on('unhandledRejection', (e) => console.warn('[unhandled]', String(e?.message ?? e).slice(0, 160)));
