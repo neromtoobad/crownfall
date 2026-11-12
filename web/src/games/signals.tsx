@@ -12,6 +12,7 @@ import { FireLight, Flames } from '../realm/fire.tsx';
 import type { Room } from '../realm/rooms.ts';
 import { usePlay } from '../realm/play.ts';
 import { gameKeys, gameUi, register, session, type Result } from './host.ts';
+import { TOO_SLOW, hallPlay, roundRng } from './seeded.ts';
 import './signals.css';
 
 export const SUN_DIR = new THREE.Vector3(-0.6, 0.42, 0.5).normalize(); // matches Realm.tsx
@@ -397,6 +398,9 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     look: LOOK.clone(), echo: -1, echoT: 0, placed: false, warn: 9, early: false, shipI: 160,
   });
   useMemo(() => { ui.reset(); }, []);
+  // Every ship's sequence comes from the round's generator: on NEAR the contract's seed, so it can replay every lamp you
+  // answered and judge the night itself (chain/src/halls.rs, `sig_ship`).
+  const rng = useMemo(() => roundRng(), []);
   if (import.meta.env.DEV) Object.assign(window, { __sig: { st, press: (i: number) => press(i) } });
   const tmp = useMemo(() => new THREE.Vector3(), []), tmp2 = useMemo(() => new THREE.Vector3(), []);
   // A round builds eleven ships of its own; without this, every round played left their geometry and materials on the GPU.
@@ -423,7 +427,7 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     sh.from.set(-520, 0, TZ - 70 + Math.random() * 120);
     sh.to.set(-140 + (Math.random() - 0.5) * 20, 0, TZ + (Math.random() - 0.5) * 44);
     sh.pos.copy(sh.from);
-    s.seq = Array.from({ length: len(s.saved) }, () => Math.floor(Math.random() * 4));
+    s.seq = Array.from({ length: len(s.saved) }, () => rng.int(4));
     s.got = []; s.phase = 'sail'; s.t = 0; s.early = false;
     ui.set({ phase: 'sail', line: `${cap(sh.name)} stands in toward the Teeth…`, len: s.seq.length, got: [], ship: sh.name });
   }
@@ -454,6 +458,7 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     sparks.emit(tmp.set(LAMP_X, TOP_Y + 3.6, lampZ(i)), 14, LAMP_RGB[i], 6, 1.2, 1.1, 0.6);
     if (s.phase !== 'answer') return;
     const want = s.seq[s.got.length];
+    hallPlay.moves.push(i); // every lamp answered, right or wrong: what the contract replays
     s.idle = 0; s.warn = 9;
     if (i !== want) { founder(`${cap(LAMP_NAMES[i])} was wrong: she wanted ${LAMP_NAMES[want]}.`); return; }
     s.got.push(i);
@@ -518,7 +523,7 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
       // Three quiet ticks as the last third of the time for this lamp runs out.
       const step = Math.ceil(left * 9);
       if (step !== s.warn) { if (step < s.warn && step >= 1 && step <= 3) burst(1500, 14, 0.035, 0.04); s.warn = step; }
-      if (s.idle > w) founder('Too slow on the lamps.');
+      if (s.idle > w) { hallPlay.moves.push(TOO_SLOW); founder('Too slow on the lamps.'); }
     } else if ((s.phase === 'home' || s.phase === 'wreck') && s.t > 3.4) {
       if (s.saved >= MAX_SHIPS || s.wrecks >= MAX_WRECKS) {
         if (!s.ended) {

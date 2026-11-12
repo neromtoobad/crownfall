@@ -42,6 +42,7 @@ use near_sdk::{
     env, ext_contract, near, require, AccountId, BorshStorageKey, Gas, NearToken, PanicOnDefault, Promise, PromiseOrValue,
 };
 
+pub mod halls;
 pub mod market;
 pub mod sim;
 #[cfg(test)]
@@ -90,6 +91,10 @@ pub const LIBRARY_ODDS: [u128; 5] = [4651, 1526, 276, 26, 1];
 pub const GATE_TOLL: u128 = NEAR / 100;
 /// The Library's bank and its open cups live in raw storage beside the realm's state (no migration needed).
 const LIB_BANK: &[u8] = b"lib:bank";
+/// A judged hall round's seed (see halls.rs), rolled at `enter` and dropped at `finish`.
+fn hall_key(round: u64) -> Vec<u8> {
+    [b"hall:seed:".as_slice(), &round.to_le_bytes()].concat()
+}
 fn lib_key(round: u64) -> Vec<u8> {
     [b"lib:cup:".as_slice(), &round.to_le_bytes()].concat()
 }
@@ -432,7 +437,7 @@ impl Realm {
     }
 
     pub fn version(&self) -> String {
-        "4".into()
+        "5".into()
     }
 
     // ---------- Coin ----------
@@ -533,7 +538,15 @@ impl Realm {
         self.burn(&who, h, cost, "not enough coin for the entry: buy some at the Warwick Mint");
         self.houses[h].rounds += 1;
         let id = self.open_round(&who, house, cost);
-        event("enter", json!({"round": id, "house": house, "game": GAMES[h], "who": who, "burned": U128(cost)}));
+        if halls::judged(house) {
+            // The round is played from this seed, so the chain can replay it at `finish` and judge the win itself.
+            let hsh = env::sha256(&[env::random_seed().as_slice(), &id.to_le_bytes(), b"hall"].concat());
+            let seed = u32::from_le_bytes([hsh[0], hsh[1], hsh[2], hsh[3]]);
+            env::storage_write(&hall_key(id), &seed.to_le_bytes());
+            event("enter", json!({"round": id, "house": house, "game": GAMES[h], "who": who, "burned": U128(cost), "seed": seed}));
+        } else {
+            event("enter", json!({"round": id, "house": house, "game": GAMES[h], "who": who, "burned": U128(cost)}));
+        }
         id
     }
 
@@ -569,7 +582,10 @@ impl Realm {
     /// In the Library `won` is ignored: the player's `bid` [count, face] is settled here. Haseeb's five dice are rolled
     /// from this block; if both cups show at least `count` of `face`, the bid pays fair odds less 5%. No bid (walking
     /// out) or a late close loses the stake to the Library's bank.
-    pub fn finish(&mut self, round: u64, won: bool, grade: Option<u8>, bid: Option<(u8, u8)>) -> Value {
+    ///
+    /// The Cups and Signals halls are judged by the chain: `won` and `grade` are ignored there, and `play` (the cup
+    /// lifted each round, or every lamp answered) is replayed against the round's seed to decide the win (halls.rs).
+    pub fn finish(&mut self, round: u64, won: bool, grade: Option<u8>, bid: Option<(u8, u8)>, play: Option<Vec<u8>>) -> Value {
         let who = env::predecessor_account_id();
         let r = self.rounds.remove(&round).unwrap_or_else(|| env::panic_str("no such round, or it's over"));
         let late = env::block_timestamp() > r.at_ns + ROUND_SECS * SEC;
@@ -578,8 +594,19 @@ impl Realm {
             let bid = if late || who != r.who { None } else { bid };
             return self.close_library(round, r, bid);
         }
-        let won = won && !late && who == r.who;
-        let grade = grade.unwrap_or(50).min(100);
+        let mine = !late && who == r.who;
+        let seed = env::storage_read(&hall_key(round)).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+        let (won, grade, judged) = match seed {
+            Some(seed) => {
+                env::storage_remove(&hall_key(round));
+                let play = play.unwrap_or_default();
+                require!(play.len() <= 128, "too many moves for one round");
+                let (w, g, score) = if mine { halls::judge(r.hall, seed, &play) } else { (false, 0, 0) };
+                (w, g, Some((seed, score)))
+            }
+            // A round entered before the hall was judged (or a hall the chain can't see): the player's word.
+            None => (won && mine, grade.unwrap_or(50).min(100), None),
+        };
         let mut p = self.player(&r.who);
         if won {
             p.wins += 1;
@@ -587,8 +614,16 @@ impl Realm {
             self.houses[r.hall as usize].wins += 1;
         }
         self.put_player(&r.who, p);
-        event("finish", json!({"round": round, "who": r.who, "hall": r.hall, "won": won, "grade": grade}));
-        json!({"round": round, "won": won})
+        match judged {
+            Some((seed, score)) => {
+                event("finish", json!({"round": round, "who": r.who, "hall": r.hall, "won": won, "grade": grade, "judged": true, "seed": seed, "score": score}));
+                json!({"round": round, "won": won, "judged": true, "score": score})
+            }
+            None => {
+                event("finish", json!({"round": round, "who": r.who, "hall": r.hall, "won": won, "grade": grade}));
+                json!({"round": round, "won": won})
+            }
+        }
     }
 
     // ---------- The Seven Wardens ----------
@@ -994,6 +1029,11 @@ impl Realm {
             "rules": json!({"demand_half_secs": market::DEMAND_HALF_SECS, "depth": U128(market::DEPTH as u128),
                 "factor_min": market::FACTOR_MIN, "factor_max": market::FACTOR_MAX, "run_bps": market::RUN_BPS, "reopen_bps": market::REOPEN_BPS}),
         })
+    }
+
+    /// The seed a judged hall round (Cups, Signals) is played from: rolled at `enter`, gone once it's finished.
+    pub fn hall_seed(&self, round: u64) -> Option<u32> {
+        env::storage_read(&hall_key(round)).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
     }
 
     /// The Library: its bank, the stake limits, the odds, and (with `round`) your cup.

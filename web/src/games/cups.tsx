@@ -9,6 +9,7 @@ import { burst, voice } from '../realm/sound.ts';
 import { FireLight, Flames } from '../realm/fire.tsx';
 import type { Room } from '../realm/rooms.ts';
 import { usePlay } from '../realm/play.ts';
+import { hallPlay, roundRng, type Rng } from './seeded.ts';
 import { gameKeys, gameUi, register, session, type Result } from './host.ts';
 
 const TABLE: [number, number] = [0, -10]; // the station, matches rooms.ts
@@ -68,13 +69,15 @@ type Phase = 'show' | 'shuffle' | 'choose' | 'lift' | 'between' | 'close';
 interface Swap { a: number; b: number; t0: number; dur: number; feint: boolean; started: boolean; done: boolean }
 const ui = gameUi({ round: 1, cleared: 0, phase: 'show' as Phase, line: 'Watch the ram.', sel: 1 });
 
-function plan(round: number, start: number) {
+// Every shuffle comes from the round's generator: on NEAR that's the seed the contract rolled at entry, so it can replay
+// the round from the cups you lifted and judge it (chain/src/halls.rs, `cup_round`: same draws, same order).
+function plan(rng: Rng, round: number, start: number) {
   const n = 3 + round * 2, dur = Math.max(0.2, 0.62 - round * 0.08);
   const out: Swap[] = [];
   let t = start;
   for (let i = 0; i < n; i++) {
-    const a = Math.floor(Math.random() * 3); let b = Math.floor(Math.random() * 2); if (b >= a) b++;
-    const feint = round >= 4 && Math.random() < 0.28;
+    const a = rng.int(3); let b = rng.int(2); if (b >= a) b++;
+    const feint = round >= 4 && rng.chance(28);
     out.push({ a, b, t0: t, dur: feint ? dur * 1.3 : dur, feint, started: false, done: false });
     t += (feint ? dur * 1.3 : dur) + 0.05;
   }
@@ -98,6 +101,8 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
     up: [false, false, false], lift: [0, 0, 0], liftV: [0, 0, 0], glow: [0, 0, 0],
     chosen: -1, sel: 1, shake: 0, hop: 0, tight: 0, seeded: false, done: false,
   });
+  const rng = useMemo(() => roundRng(), []);
+  if (import.meta.env.DEV) Object.assign(window, { __cups: { st } });
   useMemo(() => { ui.reset(); }, []);
   const mats = useMemo(() => [0, 1, 2].map(() => { const m = cupMat.clone(); m.emissive.copy(pickGlow); m.emissiveIntensity = 0; return m; }), []);
   useEffect(() => () => { for (const m of mats) m.dispose(); }, [mats]);
@@ -120,6 +125,7 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
         if (s.sel !== was) slide(0.4);
         if (k === 'e' || k === ' ' || k === 'enter') {
           s.chosen = s.slot.indexOf(s.sel); s.up[s.chosen] = true; s.phase = 'lift'; s.t = 0; clink();
+          hallPlay.moves.push(s.sel); // the table slot lifted: what the contract replays
           ui.set({ phase: 'lift', sel: s.sel });
           break; // one lift per round: a second key in the same frame must not move the pointer after it
         }
@@ -133,7 +139,7 @@ function Play({ room, end }: { room: Room; end: (r: Result) => void }) {
       for (let i = 0; i < 3; i++) s.up[i] = i === s.ram && s.t < 1.6;
       if (s.t > 2.1) {
         s.phase = 'shuffle'; s.t = 0;
-        const p = plan(s.round, 0.25); s.swaps = p.swaps; s.swapEnd = p.end;
+        const p = plan(rng, s.round, 0.25); s.swaps = p.swaps; s.swapEnd = p.end;
         ui.set({ phase: 'shuffle', line: s.round >= 4 ? 'Faster now. And he cheats.' : 'He shuffles. Keep your eye on it.' });
         voice('man', 18, 0.2, false);
       }

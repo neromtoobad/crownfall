@@ -52,9 +52,23 @@ export async function enterHall(hall: number, library: boolean): Promise<number>
     : Number(await keyCall<number>(`Burning the entry: ${fmt(units(chain.realm?.houses[hall]?.entry ?? '0'))} $${HOUSES[hall].coin}`, 'enter', { house: hall }));
 }
 
-export async function finishHall(round: number, won: boolean, grade: number) {
-  return keyCall('Recording the round', 'finish', { round, won, grade: Math.round(Math.max(0, Math.min(1, grade)) * 100) }, true);
+/** Close a hall round. In the halls the chain judges (Cups, Signals) `play` is what decides it: the contract replays it
+ * against the round's seed, and ignores `won` and `grade`. */
+export async function finishHall(round: number, won: boolean, grade: number, play?: number[]) {
+  return keyCall<{ won: boolean; judged?: boolean; score?: number }>('Recording the round', 'finish', { round, won, grade: Math.round(Math.max(0, Math.min(1, grade)) * 100), ...(play ? { play } : {}) }, true);
 }
+/** The seed a judged hall round is played from (rolled by the contract at `enter`). */
+export async function hallSeed(round: number): Promise<number | undefined> {
+  // Read right after the entry lands: a lagging RPC node may not have the block yet, so ask a few times.
+  for (let i = 0; i < 4; i++) {
+    const s = await view<number | null>('hall_seed', { round }).catch(() => null);
+    if (s !== null && s !== undefined) return s;
+    await new Promise((ok) => setTimeout(ok, 600));
+  }
+  return undefined;
+}
+/** House indexes of the halls the chain judges (chain/src/halls.rs). */
+export const JUDGED = [0, 2];
 
 // ---------- Qureshi's Library: a wager the contract settles ----------
 

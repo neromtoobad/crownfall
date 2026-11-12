@@ -83,7 +83,8 @@ fn buying_and_burning_move_the_price() {
     assert_eq!(r.holding(2, &acc("ana.testnet")).coins, held - ENTRY[2]);
     assert!(get_logs().iter().any(|l| l.contains("mt_burn")));
     ctx("ana.testnet", 0, 1010);
-    r.finish(round, true, Some(100), None);
+    let play = crate::halls::perfect(2, r.hall_seed(round).unwrap());
+    r.finish(round, true, Some(100), None, Some(play));
     let hold = r.holding(2, &acc("ana.testnet"));
     assert_eq!(hold.favour, ENTRY[2], "favour is the coin burned: a reported win adds none");
     assert_eq!(r.houses[2].wins, 1, "the win goes on the house's tally");
@@ -116,10 +117,10 @@ fn a_reported_win_moves_no_money() {
     for i in 0..3 {
         ctx("ana.testnet", 0, 1002 + i);
         let a = r.enter(4);
-        r.finish(a, true, Some(100), None);
+        r.finish(a, true, Some(100), None, None);
         ctx("bob.testnet", 0, 1002 + i);
         let b = r.enter(4);
-        r.finish(b, false, None, None);
+        r.finish(b, false, None, None, None);
     }
     let fa = r.holding(4, &acc("ana.testnet")).favour;
     let fb = r.holding(4, &acc("bob.testnet")).favour;
@@ -144,7 +145,7 @@ fn only_you_finish_your_round() {
     ctx("ana.testnet", 0, 1002);
     let id = r.enter(0);
     ctx("bob.testnet", 0, 1003);
-    r.finish(id, true, None, None);
+    r.finish(id, true, None, None, None);
 }
 
 #[test]
@@ -155,7 +156,7 @@ fn a_late_round_is_lost() {
     ctx("ana.testnet", 0, 1002);
     let id = r.enter(0);
     ctx("bob.testnet", 0, 1002 + 3601);
-    r.finish(id, true, None, None);
+    r.finish(id, true, None, None, None);
     assert_eq!(r.player(&acc("ana.testnet")).wins, 0);
 }
 
@@ -185,7 +186,7 @@ fn wager(r: &mut Realm, who: &str, stake: u128, more: u8, seed: u8) -> (u64, Val
     let face = (1..=6u8).max_by_key(|f| cup.mine.iter().filter(|&&d| d == *f).count()).unwrap();
     let have = cup.mine.iter().filter(|&&d| d == face).count() as u8;
     ctx_at(who, 0, 1002, 11, seed);
-    let out = r.finish(id, false, None, Some((have + more, face)));
+    let out = r.finish(id, false, None, Some((have + more, face)), None);
     (id, out)
 }
 
@@ -221,7 +222,7 @@ fn a_reported_win_counts_for_nothing_in_the_library() {
     ctx_at("ana.testnet", NEAR / 10, 1001, 10, 3);
     let id = r.stake();
     ctx_at("ana.testnet", 0, 1002, 11, 4);
-    let out = r.finish(id, true, Some(100), None);
+    let out = r.finish(id, true, Some(100), None, None);
     assert_eq!(out["won"], false, "no bid: the stake is lost whatever the client says");
     assert_eq!(r.bank(), bank + NEAR / 10);
     assert_eq!(r.player(&acc("ana.testnet")).halls_won, 0);
@@ -257,7 +258,7 @@ fn haseeb_rolls_in_a_later_block() {
     ctx_at("ana.testnet", NEAR / 10, 1001, 10, 3);
     let id = r.stake();
     let cup = r.cup(id).unwrap();
-    r.finish(id, false, None, Some((cup.mine.iter().filter(|&&d| d == 2).count() as u8 + 1, 2)));
+    r.finish(id, false, None, Some((cup.mine.iter().filter(|&&d| d == 2).count() as u8 + 1, 2)), None);
 }
 
 #[test]
@@ -282,7 +283,7 @@ fn a_late_library_round_is_lost() {
     ctx_at("ana.testnet", NEAR / 10, 1001, 10, 3);
     let id = r.stake();
     ctx_at("bob.testnet", 0, 1001 + 3601, 99, 4);
-    assert_eq!(r.finish(id, false, None, Some((5, 6)))["won"], false);
+    assert_eq!(r.finish(id, false, None, Some((5, 6)), None)["won"], false);
     assert_eq!(r.bank(), bank + NEAR / 10);
 }
 
@@ -303,7 +304,8 @@ fn sealed_up_to_mint(r: &mut Realm, who: &str) {
     r.buy(2, None);
     ctx(who, 0, 1003);
     let id = r.enter(2);
-    r.finish(id, true, Some(50), None);
+    let play = crate::halls::perfect(2, r.hall_seed(id).unwrap());
+    r.finish(id, false, Some(0), None, Some(play));
     r.seal(1);
 }
 
@@ -510,13 +512,13 @@ fn the_crown_goes_to_the_house_with_most_favour() {
     ctx("ana.testnet", 0, 1002);
     for _ in 0..3 {
         let id = r.enter(4);
-        r.finish(id, true, Some(100), None);
+        r.finish(id, true, Some(100), None, None);
     }
     ctx("bob.testnet", NEAR, 1003);
     r.buy(1, None);
     ctx("bob.testnet", 0, 1004);
     let id = r.enter(1);
-    r.finish(id, false, None, None);
+    r.finish(id, false, None, None, None);
     let pool = r.pool;
     assert!(pool > 0);
     ctx("bob.testnet", 0, 1000 + 3600);
@@ -544,7 +546,7 @@ fn an_unclaimed_crown_rolls_into_the_next() {
     r.buy(4, None);
     ctx("ana.testnet", 0, 1002);
     let id = r.enter(4);
-    r.finish(id, false, None, None);
+    r.finish(id, false, None, None, None);
     let pool = r.pool;
     ctx("ana.testnet", 0, 1000 + 3600);
     assert_eq!(r.end_season(), Some(4));
@@ -564,7 +566,7 @@ fn a_closed_crown_cant_be_claimed() {
     r.buy(4, None);
     ctx("ana.testnet", 0, 1002);
     let id = r.enter(4);
-    r.finish(id, false, None, None);
+    r.finish(id, false, None, None, None);
     ctx("ana.testnet", 0, 1000 + 3600);
     r.end_season();
     ctx("ana.testnet", 0, 1000 + 7300);
@@ -836,4 +838,67 @@ fn a_shut_house_buys_no_coin_back() {
     r.sell(5, U128(got * 9 / 10), None);
     ctx("ana.testnet", 0, 1003);
     r.sell(5, U128(got / 20), None);
+}
+
+// ---------- Judged halls: the chain replays Cups and Signals from the seed it rolled ----------
+
+#[test]
+fn a_judged_hall_ignores_a_forged_win() {
+    let mut r = realm();
+    for (h, who) in [(2u8, "ana.testnet"), (0, "bob.testnet")] {
+        ctx(who, NEAR, 1001);
+        r.buy(h, None);
+        ctx_seed(who, 0, 1002, 7);
+        let id = r.enter(h);
+        let seed = r.hall_seed(id).expect("a judged hall rolls a seed");
+        assert!(get_logs().iter().any(|l| l.contains("\"enter\"") && l.contains(&format!("\"seed\":{seed}"))));
+        // "I won, perfectly", with no moves (or the moves for some other seed): lost.
+        let wrong = crate::halls::perfect(h, seed ^ 0x5555);
+        let out = r.finish(id, true, Some(100), None, Some(wrong));
+        assert_eq!(out["won"], false, "hall {h}");
+        assert_eq!(out["judged"], true);
+        assert!(r.hall_seed(id).is_none(), "the seed is dropped with the round");
+        assert_eq!(r.player(&acc(who)).wins, 0);
+        assert_eq!(r.houses[h as usize].wins, 0);
+    }
+}
+
+#[test]
+fn a_judged_hall_counts_a_real_win() {
+    let mut r = realm();
+    ctx("ana.testnet", NEAR, 1001);
+    r.buy(0, None);
+    ctx_seed("ana.testnet", 0, 1002, 9);
+    let id = r.enter(0);
+    let seed = r.hall_seed(id).unwrap();
+    // Six ships in, two wrecked on the way: a win, graded for six of eight.
+    let play = crate::halls::sig_all(seed, &[true, false, true, true, false, true, true, true]);
+    let out = r.finish(id, false, Some(0), None, Some(play));
+    assert_eq!((out["won"].as_bool(), out["score"].as_u64()), (Some(true), Some(6)));
+    let p = r.player(&acc("ana.testnet"));
+    assert_eq!((p.wins, p.halls_won), (1, 1));
+    assert_eq!(r.houses[0].wins, 1);
+    assert!(get_logs().iter().any(|l| l.contains("\"judged\":true") && l.contains("\"grade\":33")));
+}
+
+#[test]
+fn two_rounds_in_one_block_get_different_seeds() {
+    let mut r = realm();
+    ctx("ana.testnet", NEAR, 1001);
+    r.buy(2, None);
+    ctx_seed("ana.testnet", 0, 1002, 3);
+    let a = r.enter(2);
+    let b = r.enter(2);
+    assert_ne!(r.hall_seed(a), r.hall_seed(b));
+}
+
+#[test]
+fn other_halls_roll_no_seed() {
+    let mut r = realm();
+    ctx("ana.testnet", NEAR, 1001);
+    r.buy(4, None);
+    ctx("ana.testnet", 0, 1002);
+    let id = r.enter(4);
+    assert!(r.hall_seed(id).is_none());
+    assert_eq!(r.finish(id, true, Some(80), None, None)["won"], true);
 }

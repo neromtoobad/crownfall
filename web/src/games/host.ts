@@ -8,7 +8,8 @@ import { useSyncExternalStore, type FC } from 'react';
 import { ledger, note, pay, playBurn } from '../realm/ledger.ts';
 import { emitPlay, hush, hushed, isAction, play, takePressed } from '../realm/play.ts';
 import { LIBRARY, hallHouse, roomOf, type GameId, type Room } from '../realm/rooms.ts';
-import { LIB_STAKE, enterHall, finishHall, held, library, type Library } from '../chain/game.ts';
+import { JUDGED, LIB_STAKE, enterHall, finishHall, hallSeed, held, library, type Library } from '../chain/game.ts';
+import { hallPlay } from './seeded.ts';
 import { onChain } from '../chain/near.ts';
 
 export interface Result {
@@ -96,6 +97,7 @@ export function beginRound() {
   session.staked = r.house === LIBRARY ? (onChain() ? LIB_STAKE : session.free ? 0 : def.entry) : 0;
   session.live = onChain();
   session.lib = undefined;
+  hallPlay.seed = undefined;
   if (onChain()) {
     const lib = r.house === LIBRARY;
     if (!lib && held(r.house) < def.entry) { session.error = `You need ${def.entry} $${hallHouse(r.house).coin} for the entry.`; emitPlay(); return; }
@@ -103,6 +105,8 @@ export function beginRound() {
     enterHall(r.house, lib).then(async (id) => {
       // Your dice were rolled on chain in the staking block: read them back before sitting down.
       if (lib) session.lib = await library(id).catch(() => undefined);
+      // Cups and Signals are played from the seed the contract rolled, so it can replay the round and judge it.
+      if (JUDGED.includes(r.house)) hallPlay.seed = await hallSeed(id);
       session.busy = false; session.chainRound = id;
       note(lib ? `Staked ${LIB_STAKE} NEAR at ${def.name} in Qureshi's Library, on NEAR.` : `Played ${def.name} in the hall of House ${hallHouse(r.house).name}: ${def.entry} $${hallHouse(r.house).coin} burned on NEAR.`, lib ? undefined : r.house);
       session.phase = 'play'; session.round++;
@@ -144,7 +148,9 @@ export function endRound(res: Result) {
     const round = session.chainRound;
     session.chainRound = undefined;
     session.payout = r.house === LIBRARY ? res.paid ?? 0 : 0;
-    if (round !== undefined) void finishHall(round, res.won, g).catch(() => { /* shown in the chain bar */ });
+    // In the halls the chain judges, the moves go too: the contract replays them and decides the win itself.
+    const play = JUDGED.includes(r.house) && hallPlay.seed !== undefined ? [...hallPlay.moves] : undefined;
+    if (round !== undefined) void finishHall(round, res.won, g, play).catch(() => { /* shown in the chain bar */ });
   } else if (res.won) {
     ledger.favour[r.house] = (ledger.favour[r.house] ?? 0) + 1;
     const where = r.house === LIBRARY ? 'Qureshi’s Library' : `the hall of House ${h.name}`;
