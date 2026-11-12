@@ -20,6 +20,7 @@ import { ChainBar } from './chain/ChainBar.tsx';
 import { buyCoin, burned, claimCrown, crownOf, endSeason, favour, held, price, quoteOf, sellCoin, supply, type Crown } from './chain/game.ts';
 import { CONTRACT, EXPLORER, ensureKey, onChain, openSignIn, signsHere, units, useChain } from './chain/near.ts';
 import { SignIn } from './chain/SignIn.tsx';
+import { WeekPanel } from './WeekPanel.tsx';
 
 export function PlayHud() {
   const p = usePlay();
@@ -172,6 +173,7 @@ function Panel({ prompt }: { prompt: Prompt }) {
       <div className={`panel ${prompt.panel === 'seals' ? 'book' : ''}`} style={{ ['--c' as string]: h.colors[0] }} onClick={(e) => e.stopPropagation()}>
         <button className="x" onClick={close} aria-label="Close">Esc</button>
         {prompt.panel === 'mint' && <MintPanel />}
+        {prompt.panel === 'week' && <WeekPanel back={() => openPanel({ ...prompt, panel: 'mint' })} />}
         {prompt.panel === 'war' && <WarPanel house={seat.house} />}
         {prompt.panel === 'gate-of' && <GateOf house={h.id} />}
         {prompt.panel === 'lord' && <LordPanel house={h.id} />}
@@ -224,6 +226,7 @@ function MintPanel() {
         <button className="go" disabled={n <= 0 || n > purse || !!c.busy} onClick={() => void buyCoin(h, n)}>{q?.shut ? 'Invest' : 'Buy with'} {n || 0} NEAR</button>
         <button className="ghost" disabled={held(h) <= 0 || !!c.busy || !!q?.shut} onClick={() => void sellCoin(h, held(h) / 2)}>Sell half</button>
       </div>
+      <button className="ff" onClick={() => openPanel({ id: 'week', verb: 'Watch', what: 'a week at the Mint', panel: 'week' })}>▶▶ Fast-forward a week <span>Watch these prices move under the same rule</span></button>
       {live
         ? <p className="honest">Live on NEAR testnet: <a href={`${EXPLORER}/address/${CONTRACT}`} target="_blank" rel="noreferrer">{CONTRACT}</a>. {signsHere() ? 'Buying, selling and hall rounds all sign in this browser.' : 'Buying asks your wallet; selling and hall rounds use the game key.'}</p>
         : <p className="honest">Practice purse in this browser. <button className="link" onClick={() => openSignIn()}>Play on NEAR testnet</button> to trade the real coins.</p>}

@@ -641,3 +641,28 @@ html.touch .sealbar span { display: none; }
 .signin .err { margin: 0; color: #ffb0a0; font: 13px/1.35 var(--sans); }
 .signin .wallet { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 14px; border-radius: 999px; background: none; border: 1px solid rgba(0, 236, 151, 0.45); color: #e9fff5; font: 600 14px/1 var(--sans); }
 .signin .wallet:hover { background: rgba(0, 236, 151, 0.12); }
+
+/* The fast-forward: a week in a minute */
+button.ff { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; background: rgba(214, 178, 110, 0.08); border: 1px dashed var(--gold); border-radius: 8px; padding: 8px 12px; color: var(--gold); font: 600 14px/1.3 var(--sans); text-align: left; }
+button.ff span { font-weight: 400; font-size: 12px; color: var(--ink-2); }
+button.ff:hover { background: rgba(214, 178, 110, 0.16); }
+.week-chart { width: 100%; height: auto; background: rgba(255, 240, 200, 0.03); border: 1px solid var(--edge); border-radius: 8px; }
+.week-chart .day { stroke: rgba(255, 240, 200, 0.07); }
+.week-chart .par { stroke: rgba(255, 240, 200, 0.28); stroke-dasharray: 3 4; }
+.week-chart .lab { fill: var(--ink-2); font: 10px var(--sans); }
+.week-chart .now { stroke: var(--gold); stroke-width: 1; opacity: 0.6; }
+.week-chart circle.shut { fill: #e0603f; } .dot.shut { background: #e0603f; }
+.week-chart circle.reopen { fill: var(--near); } .dot.reopen { background: var(--near); }
+.week-clock { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 12px; color: var(--ink-2); flex-wrap: wrap; }
+.week-clock b { font: 600 15px/1.2 var(--mono); color: var(--ink); }
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin: 0 4px 0 10px; }
+.week-houses { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.week-houses button { display: flex; align-items: baseline; gap: 6px; min-width: 0; background: rgba(255, 240, 200, 0.04); border: 1px solid var(--edge); border-left: 3px solid var(--c); border-radius: 6px; padding: 5px 8px; color: var(--ink); font: 12px/1.3 var(--mono); }
+.week-houses button.on { border-color: var(--c); }
+.week-houses .up { color: #e8a25c; } .week-houses .down { color: #8fc7e8; }
+.week-houses button.shut { background: rgba(224, 96, 63, 0.14); }
+.week-houses .dot { margin: 0 0 0 auto; align-self: center; }
+.week-log { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--ink-2); min-height: 92px; }
+.week-log time { font-family: var(--mono); color: var(--ink); margin-right: 4px; }
+.week-log li.shut { color: #f0b8a0; } .week-log li.reopen { color: var(--near); }
+@media (max-width: 560px) { .week-houses { grid-template-columns: repeat(2, 1fr); } }
