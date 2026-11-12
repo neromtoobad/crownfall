@@ -18,7 +18,7 @@ Each claim below comes with a way to check it. Every link goes to the chain, the
 | Two hall games are judged by the contract, not the browser | Play Signals (Ashveil, at Greywater) or the Cups (Velmont, at Vinehold) | [enter](https://testnet.nearblocks.io/txns/3d7U8vMPihvHdyAb2LX8vtDLoUFWUwvuZNa5HwAx3KPf) rolls the seed; a [finish claiming a win](https://testnet.nearblocks.io/txns/DEBv7JDPoYYhVFHgNJT1tgdke7fo4qp1gGC48u1fgXUh) with made-up moves is replayed, scored 0 and logged `won: false, judged: true` | [`halls.rs`](chain/src/halls.rs); `a_judged_hall_ignores_a_forged_win` |
 | Races are run and settled inside the contract | Bet at the Hippodrome, watch, collect | [settle](https://testnet.nearblocks.io/txns/4cvdtaye9Ma2g5yt6P6KwLiHbDwRn48X1ZkzuMrkDusM) (settle), [bet](https://testnet.nearblocks.io/txns/3V3pieYUqbcpXycULDfFRefxUYMwRGRWVSh873vVrqWe), [whip](https://testnet.nearblocks.io/txns/8DSpi2S7fwQ5p8S5q5sGNYw9eycX1SxcFsoDWFB8H1uy), [claim](https://testnet.nearblocks.io/txns/CXakAxDojcPgxaXH9mkFiabF3AQHEB87ZMApEZBEVfg7) (bet) | [`sim.rs`](chain/src/sim.rs); `sim_matches_js` (Rust race = browser race, bit for bit, 40+ cases), `the_seed_is_drawn_after_betting_closes` |
 | Seals are kept on chain and follow the story | Meet the Warden of the Gate | [Gate seal](https://testnet.nearblocks.io/txns/CHnjsQtopTJYuBaskgL2Mkk9trXJkCZ985Y1AsUcUZV3) (0.01 NEAR toll), then the [Mint seal](https://testnet.nearblocks.io/txns/AGuxD8yxh8BfpPGio71SRTG2ipZXDtZ2iFZGeWhpsEU5), which the contract only grants after a buy and a played round | `seal` in [`lib.rs`](chain/src/lib.rs); `seals_follow_the_story`, `the_gate_takes_a_toll` |
-| The season crowns a house and pays its players | Seal Book, then the Ashen Throne | END_SEASON_TX (season 1 crowned House Halloway) | `end_season`, `claim_crown`; `the_crown_goes_to_the_house_with_most_favour` |
+| The season crowns a house and pays its players | Seal Book, then the Ashen Throne | Season 1 crowned House Halloway on 12 November; rival Bram, a Halloway player, then [claimed his share of the pool](https://testnet.nearblocks.io/txns/8HehnS9v1Sy2Dn21Br38trGKRXUJeGMjzSGEhR6TGY7D) | `end_season`, `claim_crown`; `the_crown_goes_to_the_house_with_most_favour` |
 | Coins are standard NEP-245 tokens | – | `mt_balance_of` on the contract page | `mt_*` in [`lib.rs`](chain/src/lib.rs); `coins_are_multi_tokens`, `a_transfer_call_returns_what_isnt_used` |
 | Four rival agents play with their own wallets | Their moves show in the feed on the map | [`cf-odo-vael.testnet`](https://testnet.nearblocks.io/address/cf-odo-vael.testnet) and the other rivals | [`agents/rivals.mjs`](agents/rivals.mjs) |
 
@@ -49,7 +49,7 @@ The contract is built with `cargo near build reproducible-wasm`, which compiles 
 | Commit | [`0daf80b`](https://github.com/neromtoobad/crownfall/tree/0daf80b7ef84553140bbea62d1c63eab09aa4dfb) |
 | Code hash (base58, as NEAR shows it) | `DEq9f3kLGrTQuiWAjMbk8oyfPtxHo3173bhvV4GGFA4b` |
 | sha256 of the wasm | `b5d73c74a3cfa641f52fef5b3730608f20681a227938576e36c4e5595e9de354` |
-| Deployed in | DEPLOY_TX |
+| Deployed in | [`jX66w3Vm…`](https://testnet.nearblocks.io/txns/jX66w3VmaWFS3rYNCHHxpNTJPBC3x625vvzy61yXLvP), 12 November, a code-only upgrade (state kept) |
 
 To check: rebuild at that commit and compare the hash with the one on the
 [contract page](https://testnet.nearblocks.io/address/crownfall-vael.testnet). The contract also reports its own
