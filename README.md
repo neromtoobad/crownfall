@@ -39,6 +39,11 @@ and a run on a house shuts its hall until its players buy back in.
 
 ## For judges: try it in ten minutes
 
+**Fastest:** open https://crownfall.nerom.site/?judge. It makes you a testnet account with no sign-in and keeps a
+checklist on screen: each claim, the button that tests it, and what should happen. Each line ticks itself when the
+contract confirms it. [JUDGE.md](JUDGE.md) has the same claims with transaction links, the tests, the reproducible
+build hash and what existed before the hackathon.
+
 You don't need a wallet. Sign in with Google (or type a name) and the realm makes you a NEAR testnet account,
 `yourname-x7k2.vael.testnet`, with 0.5 testnet NEAR in it, enough for every step below. Its key stays in your
 browser, so nothing ever pops up. A NEAR testnet wallet works too, from the same dialog. Every call below is on
