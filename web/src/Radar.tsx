@@ -9,6 +9,7 @@ import { GIVERS, available, current, story, target } from './realm/missions.ts';
 import { PLACES, STABLES } from './realm/places.ts';
 import { route } from './realm/gps.ts';
 import { MARKER } from './realm/Story.tsx';
+import { live as liveRace, toOff, useRace } from './realm/race.ts';
 
 const PX = 900; // the realm picture is PX × PX for SIZE × SIZE units
 const U = PX / SIZE;
@@ -62,19 +63,22 @@ function blips(): Blip[] {
   if (!story.run) for (const g of GIVERS) if (open.has(g.id)) out.push({ x: g.at[0], z: g.at[1], kind: 'giver', label: g.letter });
   for (const h of HOUSES) out.push({ x: h.pos[0], z: h.pos[1], kind: 'seat', color: h.colors[0], label: h.name[0] });
   const icon: Record<string, string> = { mint: '$', library: 'L', council: '♛', rookery: 'R', gate: 'G', stables: 'H' };
-  for (const p of PLACES) if (icon[p.id]) out.push({ x: p.x, z: p.z, kind: 'place', label: icon[p.id] });
+  // The Hippodrome is open to everyone from the start, so its pin is gold, not the dark of the other places.
+  for (const p of PLACES) if (icon[p.id]) out.push({ x: p.x, z: p.z, kind: 'place', label: icon[p.id], color: p.id === 'stables' ? '#e8b53a' : undefined });
   if (!play.driving) out.push({ x: me.car.x, z: me.car.z, kind: 'car' });
   if (waypoint.at) out.push({ x: waypoint.at[0], z: waypoint.at[1], kind: 'waypoint' });
   const t = target();
   if (t) out.push({ x: t[0], z: t[1], kind: 'target' });
   return out;
 }
-/** A spot you picked on the full map: the GPS takes you there when there's no mission. */
+/** A spot you picked (on the full map, or the race ticker): the GPS takes you there ahead of the mission's target,
+ *  and forgets it once you arrive. */
 export const waypoint = { at: undefined as [number, number] | undefined };
 
 let gps = { key: '', pts: [] as [number, number][], t: 0 };
 function gpsLine(): [number, number][] {
-  const t = target() ?? waypoint.at;
+  if (waypoint.at && Math.hypot(waypoint.at[0] - me.x, waypoint.at[1] - me.z) < 16) waypoint.at = undefined;
+  const t = waypoint.at ?? target();
   if (!t) return [];
   const key = `${t[0].toFixed(0)},${t[1].toFixed(0)}`, now = performance.now();
   if (key !== gps.key || now - gps.t > 900) gps = { key, pts: route(me.x, me.z, t[0], t[1]), t: now };
@@ -88,9 +92,9 @@ function drawBlip(g: CanvasRenderingContext2D, b: Blip, x: number, y: number, s 
   else if (b.kind === 'waypoint') { g.fillStyle = '#c86bff'; g.beginPath(); g.moveTo(0, -8); g.lineTo(7, 0); g.lineTo(0, 8); g.lineTo(-7, 0); g.closePath(); g.fill(); g.stroke(); }
   else if (b.kind === 'car') { g.fillStyle = '#f4ead6'; g.beginPath(); g.arc(0, 0, 4, 0, Math.PI * 2); g.fill(); g.stroke(); }
   else {
-    const fill = b.kind === 'giver' ? MARKER : b.kind === 'seat' ? b.color! : '#2a2119';
+    const fill = b.kind === 'giver' ? MARKER : b.color ?? '#2a2119';
     g.fillStyle = fill; g.beginPath(); g.arc(0, 0, b.kind === 'place' ? 7 : 8.5, 0, Math.PI * 2); g.fill(); g.stroke();
-    g.fillStyle = b.kind === 'giver' ? '#1a130c' : b.kind === 'seat' ? '#fff' : '#f2d48f';
+    g.fillStyle = b.kind === 'giver' ? '#1a130c' : b.kind === 'seat' ? '#fff' : b.color ? '#1a130c' : '#f2d48f';
     g.font = `700 ${b.kind === 'place' ? 9 : 10}px Inter, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
     g.fillText(b.label ?? '', 0, 0.5);
   }
@@ -126,7 +130,7 @@ export function Radar({ size = 210 }: { size?: number }) {
       g.drawImage(pic, -SIZE / 2, -SIZE / 2, SIZE, SIZE);
       const line = gpsLine();
       if (line.length > 1) {
-        g.strokeStyle = waypoint.at && !target() ? '#c86bff' : MARKER; g.lineWidth = 4.5 * upp; g.lineCap = 'round'; g.lineJoin = 'round';
+        g.strokeStyle = waypoint.at ? '#c86bff' : MARKER; g.lineWidth = 4.5 * upp; g.lineCap = 'round'; g.lineJoin = 'round';
         g.beginPath(); line.forEach(([x, z], k) => (k ? g.lineTo(x, z) : g.moveTo(x, z))); g.stroke();
       }
       g.restore();
@@ -217,7 +221,7 @@ export function FullMap() {
         {c ? <p className="obj">{c.mission.title}: {c.step.text().replace(/\*\*/g, '')}</p> : <p className="obj">No mission. Yellow letters are people with work for you.</p>}
         <ul className="legend">
           <li><i className="sq" />Objective</li><li><i className="ltr">O</i>Mission giver</li><li><i className="dia" />Your waypoint (click the map)</li>
-          <li><i className="dot" />Your chariot</li><li><i className="pl">$</i>Mint · <b>H</b> Hippodrome · <b>R</b> Rookery · <b>L</b> Library</li>
+          <li><i className="dot" />Your chariot</li><li><i className="pl">$</i>Mint · <b>R</b> Rookery · <b>L</b> Library</li><li><i className="pl race">H</i>Hippodrome: race or bet, any time</li>
         </ul>
         {hover && <p className="hover">{hover}</p>}
         <div className="actions">
@@ -230,3 +234,21 @@ export function FullMap() {
 }
 
 export const STABLES_AT = STABLES;
+
+/** Above the radar: when the next race goes off at the Hippodrome. The races are open from the start, whatever the
+ *  story says; a click sets the route there. Hidden once you're at the Hippodrome. */
+export function RaceTicker() {
+  usePlay();
+  const r = useRace().race;
+  const far = Math.hypot(me.x - HIPPODROME.pos[0], me.z - HIPPODROME.pos[1]) > 150;
+  if (!far) return null;
+  const left = Math.ceil(toOff(r));
+  const when = r.phase === 'parade' ? (left > 0 ? `Next race in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}` : 'Under starter’s orders') : 'A race is running now';
+  const set = !!waypoint.at && Math.hypot(waypoint.at[0] - STABLES[0], waypoint.at[1] - STABLES[1]) < 1;
+  return (
+    <button className={`race-soon${set ? ' set' : ''}`} onClick={(e) => { e.stopPropagation(); waypoint.at = set ? undefined : [STABLES[0], STABLES[1]]; gps.key = ''; emitPlay(); }}
+      title={set ? 'Clear the route to the Hippodrome' : 'Set the route to the Hippodrome'}>
+      <i>H</i><span><b>{when}</b>{set ? 'Route set · follow the purple line' : `${liveRace.chain ? 'Bet on NEAR' : 'Race or bet'} at the Hippodrome · click for the route`}</span>
+    </button>
+  );
+}

@@ -7,7 +7,8 @@ import { live, setWatch, useRace, laneLen, laneR, M, MID, standings } from './re
 import { RaceHud } from './RaceHud.tsx';
 import { startDrive } from './realm/drive.ts';
 import { NearMark } from './NearMark.tsx';
-import { FullMap, Radar, openMap } from './Radar.tsx';
+import { FullMap, RaceTicker, Radar, openMap, waypoint } from './Radar.tsx';
+import { PLACES, STABLES } from './realm/places.ts';
 import { NearPill } from './NearMark.tsx';
 import { Bark, AreaName, Card, Objective, Status, Talk, Tips } from './StoryHud.tsx';
 import { Touch } from './Touch.tsx';
@@ -15,7 +16,7 @@ import { TOUCH } from './realm/play.ts';
 import { GameHud } from './games/GameHud.tsx';
 import { Fade, SealBar, SealGlyph } from './StoryHud.tsx';
 import { MISSIONS, WARDENS, nextHint, story } from './realm/missions.ts';
-import { ROOMS } from './realm/rooms.ts';
+import { ROOMS, doorOf, libDoor } from './realm/rooms.ts';
 import { ChainBar } from './chain/ChainBar.tsx';
 import { buyCoin, burned, claimCrown, crownOf, endSeason, favour, held, price, quoteOf, sellCoin, supply, type Crown } from './chain/game.ts';
 import { CONTRACT, EXPLORER, ensureKey, onChain, openSignIn, signsHere, units, useChain } from './chain/near.ts';
@@ -36,6 +37,7 @@ export function PlayHud() {
         <>
           {p.racing && <DriveHud />}
           {!p.racing && !p.game && p.inside < 0 && <Radar size={TOUCH ? 108 : 210} />}
+          {!p.racing && !p.game && p.inside < 0 && !p.panel && !watching && <RaceTicker />}
           <Status />
           {!p.game && !p.racing && <ChainBar />}
           <AreaName />
@@ -452,6 +454,18 @@ function SealBook() {
       <h2>Seven seals for the Ashen Throne</h2>
       <p className="lede">The king of Vael is dead. By the old law the throne goes to whoever earns the seals of the Seven Wardens this season. Every house strikes its own coin, and every game played in a house's hall burns some of it.</p>
       <div className="next"><b style={{ color: '#ffd23f' }}>Next · </b>{next.text.split('**').map((t, i) => (i % 2 ? <b key={i} style={{ color: '#ffd23f' }}>{t}</b> : <span key={i}>{t}</span>))}</div>
+      <h3>Open to you any time, whatever the story · click for the route</h3>
+      <div className="anytime">{([
+        ['$', 'The Warwick Mint', 'buy and sell house coin', [PLACES.find((x) => x.id === 'mint')!.x, PLACES.find((x) => x.id === 'mint')!.z]],
+        ['H', 'The Mumtaz Hippodrome', 'drive a chariot, or bet on the race', [STABLES[0], STABLES[1]]],
+        ['L', 'Qureshi’s Library', 'Liar’s Dice for a stake', [libDoor().out[0], libDoor().out[1]]],
+        [HOUSES[mine].name[0], `Your hall at ${HOUSES[mine].seat}`, ROOMS.find((r) => r.house === mine)?.gameName ?? 'your house game', [doorOf(HOUSES[mine]).x, doorOf(HOUSES[mine]).z]],
+      ] as [string, string, string, [number, number]][]).map(([icon, name, what, at]) => (
+        <button key={name} className={icon === 'H' ? 'race' : ''} onClick={() => { waypoint.at = at; openPanel(); }}>
+          <i>{icon}</i><span><b>{name}</b>{what}</span>
+        </button>
+      ))}</div>
+      <h3>The Seven Wardens</h3>
       <ul className="wardens">{WARDENS.map((g) => {
         const m = MISSIONS.find((x) => x.giver.id === g.id)!;
         const done = !!m.seal && seals.includes(m.seal), open = !done && (!m.needs || m.needs());
