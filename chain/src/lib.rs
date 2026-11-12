@@ -1014,7 +1014,7 @@ impl Realm {
     pub fn get_realm(&self) -> Value {
         let s = self.season;
         json!({
-            "version": "4",
+            "version": "5",
             "season": s,
             "season_ends_ns": U128(self.season_ends_ns as u128),
             "pool": U128(self.pool),
