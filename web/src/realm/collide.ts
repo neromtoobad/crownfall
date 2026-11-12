@@ -68,15 +68,17 @@ function arenaPush(x: number, z: number, r: number, out: { x: number; z: number 
 const tmp = { x: 0, z: 0 };
 
 /** People walking about (travellers, lords, soldiers): you can't walk through them. Each registers its Object3D. */
-export interface Person { position: { x: number; z: number }; userData: { bump?: number; dodge?: number; kind?: string; name?: string; theirs?: string } }
+export interface Person { position: { x: number; z: number }; userData: { bump?: number; dodge?: number; kind?: string; name?: string; theirs?: string; r?: number } }
 export const crowd = new Set<Person>();
 export const PERSON_R = 0.75;
+/** How wide a person is: most are PERSON_R; a lord in robes says so in userData.r. */
+export const radiusOf = (p: { userData: { r?: number } }) => p.userData.r ?? PERSON_R;
 /** Push (x, z) out of anyone in the crowd; returns the person hit, if any. */
 function pushPeople(x: number, z: number, r: number, out: { x: number; z: number }) {
   let hit: Person | undefined;
   out.x = x; out.z = z;
   for (const p of crowd) {
-    const ex = out.x - p.position.x, ez = out.z - p.position.z, min = r + PERSON_R;
+    const ex = out.x - p.position.x, ez = out.z - p.position.z, min = r + radiusOf(p);
     if (Math.abs(ex) > min || Math.abs(ez) > min) continue;
     const d = Math.hypot(ex, ez);
     if (d < 1e-4) { out.x = p.position.x + min; out.z = p.position.z; hit = p; } // dead centre: any way out will do
@@ -87,7 +89,7 @@ function pushPeople(x: number, z: number, r: number, out: { x: number; z: number
 /** Everyone within r of (x, z) (a chariot uses this: people leap out of its way rather than stop it). */
 export function peopleNear(x: number, z: number, r: number) {
   const out: Person[] = [];
-  for (const p of crowd) if (Math.hypot(p.position.x - x, p.position.z - z) < r + PERSON_R) out.push(p);
+  for (const p of crowd) if (Math.hypot(p.position.x - x, p.position.z - z) < r + radiusOf(p)) out.push(p);
   return out;
 }
 /**
@@ -153,7 +155,8 @@ function pushWalls(x: number, z: number, r: number, skip: string | undefined) {
  * Move a round body of radius r from (x, z) by (dx, dz), sliding along whatever it hits.
  * Returns the new position, whether it hit something, and (with `people`) who it walked into.
  */
-export function moveBody(x: number, z: number, dx: number, dz: number, r: number, people = false, skip?: string) {
+/** `pr` is the body's width against people, when it differs from its width against walls (a lord's robes). */
+export function moveBody(x: number, z: number, dx: number, dz: number, r: number, people = false, skip?: string, pr = r) {
   let nx = x + dx, nz = z + dz;
   let hit = false;
   let who: Person | undefined;
@@ -165,7 +168,7 @@ export function moveBody(x: number, z: number, dx: number, dz: number, r: number
   for (let pass = 0; pass < 2; pass++) {
     if (pushWalls(nx, nz, r, skip)) { hit = true; nx = res.x; nz = res.z; }
     if (people) {
-      const p = pushPeople(nx, nz, r, tmp);
+      const p = pushPeople(nx, nz, pr, tmp);
       if (p) { who = p; nx = tmp.x; nz = tmp.z; }
     }
   }

@@ -222,7 +222,7 @@ button.item:hover:not(:disabled) { border-color: var(--gold); }
 .objective .clock.low { color: #ff6a55; }
 .objective .quit { font: italic 14px/1 var(--serif); color: var(--ink-2); background: none; border: 0; border-bottom: 1px solid rgba(244, 234, 214, 0.3); padding: 2px 0; }
 .objective .quit:hover { color: var(--ink); border-color: var(--gold); }
-.prompt { bottom: 96px; }
+.prompt { bottom: 124px; } /* clear of a two-line objective */
 
 .letterbox { z-index: 35; position: absolute; left: 0; right: 0; height: 0; background: #000; transition: height 0.45s ease; pointer-events: none; }
 .letterbox.lb-top { top: 0; } .letterbox.lb-bottom { bottom: 0; }
@@ -247,7 +247,7 @@ button.item:hover:not(:disabled) { border-color: var(--gold); }
 .area small { font: italic 17px/1.2 var(--serif); color: var(--ink); }
 
 /* Tips: a ruled note in the corner, keys as little stone caps, not a black box. */
-.tip { z-index: 31; position: absolute; left: 24px; top: 22px; max-width: 360px; padding: 14px 40px 14px 16px; cursor: pointer;
+.tip { z-index: 31; position: absolute; left: 24px; top: 62px; /* under the sign-in pill */ max-width: 360px; padding: 14px 40px 14px 16px; cursor: pointer;
   background: linear-gradient(90deg, rgba(14, 10, 7, 0.8), rgba(14, 10, 7, 0.55) 70%, rgba(14, 10, 7, 0)); border-left: 2px solid var(--gold);
   font: 17px/1.4 var(--serif); color: var(--ink); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8); animation: tipin 0.6s ease-out; }
 .tip h4 { font: 700 12px/1 var(--display); letter-spacing: 0.18em; text-transform: uppercase; color: var(--gold); margin-bottom: 10px; }
@@ -309,7 +309,7 @@ button.item:hover:not(:disabled) { border-color: var(--gold); }
 .touch-pause i { width: 4px; height: 14px; border-radius: 2px; background: #f1e3c4; }
 
 /* Barks: what passers-by say, as a quiet subtitle above the objective. */
-.bark { z-index: 31; position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); max-width: min(640px, calc(100% - 40px)); text-align: center;
+.bark { z-index: 31; position: absolute; left: 50%; bottom: 184px; /* above the E prompt */ transform: translateX(-50%); max-width: min(640px, calc(100% - 40px)); text-align: center;
   font: italic 19px/1.35 var(--serif); color: #fbf3e2; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.95), 0 0 14px rgba(0, 0, 0, 0.7); pointer-events: none;
   animation: barkin 0.35s ease-out; transition: opacity 0.7s; }
 .bark.out { opacity: 0; }
@@ -351,7 +351,7 @@ button.item:hover:not(:disabled) { border-color: var(--gold); }
 .game-esc { z-index: 40; position: absolute; left: 22px; top: 18px; font: 14px/1 var(--sans); color: var(--ink-2); display: flex; align-items: center; gap: 6px; text-shadow: 0 1px 3px #000; }
 
 /* The seven seals, always in view at the top. */
-.sealbar { z-index: 31; position: absolute; left: 50%; top: 14px; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; padding: 5px 12px 5px 8px;
+.sealbar { z-index: 31; position: absolute; left: max(50%, 486px); top: 14px; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; padding: 5px 12px 5px 8px;
   background: linear-gradient(90deg, rgba(14, 10, 7, 0), rgba(14, 10, 7, 0.62) 18%, rgba(14, 10, 7, 0.62) 82%, rgba(14, 10, 7, 0)); pointer-events: none; }
 .sealbar i { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; color: rgba(246, 231, 196, 0.34); border: 1px dashed rgba(246, 231, 196, 0.28); }
 .sealbar i.on { color: #2a0d08; background: radial-gradient(circle at 35% 30%, #d9534a, #8f1d17 70%); border: 1px solid #5a120e; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6); }
@@ -449,6 +449,23 @@ button.item:hover:not(:disabled) { border-color: var(--gold); }
 .chainbar .connect.practice { background: rgba(14, 10, 7, 0.82); border-color: var(--near); box-shadow: 0 0 0 1px rgba(0, 236, 151, 0.25); }
 .chainbar .connect.practice:hover { background: rgba(0, 60, 40, 0.9); }
 .chainbar .connect.practice .tag { font: 700 10px/1 var(--sans); letter-spacing: 0.08em; text-transform: uppercase; color: #1a130c; background: var(--gold); padding: 3px 6px; border-radius: 4px; }
+/* Narrow desktop windows: the seal bar never slides under the sign-in pill (its centre stays right of the pill, see
+   .sealbar), shrinks when space runs out, and the objective line keeps to the right of the radar instead of
+   centring across it. */
+.chainbar .connect, .chainbar .who { max-width: 300px; white-space: nowrap; }
+@media (pointer: fine) and (min-width: 641px) and (max-width: 1100px) {
+  .objective { left: 252px; right: 20px; transform: none; max-width: none; min-width: 0; font-size: 19px; }
+}
+@media (pointer: fine) and (min-width: 641px) and (max-width: 860px) {
+  .sealbar { left: max(50%, 452px); gap: 3px; padding: 4px 8px 4px 6px; }
+  .sealbar i { width: 22px; height: 22px; }
+  .sealbar i svg { width: 14px; height: 14px; }
+  .sealbar span { font-size: 12px; }
+}
+@media (pointer: fine) and (min-width: 641px) and (max-width: 760px) {
+  .sealbar { left: max(50%, 404px); }
+  .sealbar span { display: none; }
+}
 @media (max-width: 560px) { .wallet-step { grid-template-columns: auto 1fr; } .wallet-step .near-btn { grid-column: 1 / -1; } }
 
 /* Loading screen */

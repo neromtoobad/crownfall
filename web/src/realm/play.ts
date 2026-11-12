@@ -16,6 +16,9 @@ export const BODIES = [
   { id: 'peasant-f', name: 'A farmwife' },
 ] as const;
 
+/** How wide your figure is against other people: robed lords, ladies and the queen are wider than the rest. */
+export const myWidth = () => (/^(lord|lady|queen)-/.test(play.seat?.body ?? '') ? 1.05 : 0.9);
+
 export interface Seat { body: string; house: number; name: string; motto: string }
 
 /** Something you can do where you stand. */

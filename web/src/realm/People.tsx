@@ -8,8 +8,8 @@ import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js
 import { ground } from './heights.ts';
 import { walkY } from './bridges.ts';
 import { HOUSES, ROADS, roadCurve, routeBetween, yardOf } from './layout.ts';
-import { PERSON_R, beastLists, crowd as solidCrowd, driven } from './collide.ts';
-import { me, play } from './play.ts';
+import { beastLists, crowd as solidCrowd, driven, radiusOf } from './collide.ts';
+import { me, myWidth, play } from './play.ts';
 import { speakAs } from './barks.ts';
 
 const UP = new THREE.Vector3(0, 1, 0), qa = new THREE.Quaternion(), qb = new THREE.Quaternion(), qc = new THREE.Quaternion();
@@ -90,7 +90,7 @@ function gather(stamp: number) {
   if (stamp === hazardStamp) return hazards;
   hazardStamp = stamp;
   hazards.length = 0;
-  if (play.mode === 'play' && !play.driving && !play.racing && !play.game) { you.x = me.x; you.z = me.z; hazards.push(you); }
+  if (play.mode === 'play' && !play.driving && !play.racing && !play.game) { you.x = me.x; you.z = me.z; you.r = myWidth(); hazards.push(you); }
   for (const list of beastLists()) for (const b of list) hazards.push(b);
   for (const b of driven) hazards.push(b);
   return hazards;
@@ -104,7 +104,7 @@ function steer(w: Walker, hz: Hazard[], want: number, reach: number, since: numb
   for (const h of hz) {
     const dx = h.x - px, dz = h.z - pz;
     if (Math.abs(dx) > 14 || Math.abs(dz) > 14) continue;
-    const along = dx * tx + dz * tz, across = dz * tx - dx * tz, R = h.r + PERSON_R + 0.45;
+    const along = dx * tx + dz * tz, across = dz * tx - dx * tz, R = h.r + radiusOf(w.obj) + 0.45;
     if (along < -R || along > 9) continue;
     // Step round it on the nearer side, if the road is wide enough there.
     const hl = w.lat + across;
@@ -179,7 +179,7 @@ function stride(w: Walker, hz: Hazard[], now: number, dt: number, reach: number,
   let x = tmp.x - tan.z * lat, z = tmp.z + tan.x * lat, held = false;
   // Never into anything: a step that would end inside a hazard, and nearer to it than before, isn't taken.
   if (!lagging) for (const h of hz) {
-    const min = h.r + PERSON_R, ex = x - h.x, ez = z - h.z;
+    const min = h.r + radiusOf(w.obj), ex = x - h.x, ez = z - h.z;
     if (Math.abs(ex) > min || Math.abs(ez) > min) continue;
     const d2 = ex * ex + ez * ez;
     if (d2 < min * min && d2 < (px - h.x) ** 2 + (pz - h.z) ** 2) { held = true; break; }
@@ -231,7 +231,8 @@ export function useCrowd(url: string, n: number, scale: number, speedUp = 1, kin
       const obj = cloneSkinned(gltf.scene);
       obj.scale.setScalar(scale);
       obj.traverse((o) => { if ((o as THREE.Mesh).isMesh) { o.castShadow = true; o.frustumCulled = false; } });
-      Object.assign(obj.userData, { kind, name, theirs, head: obj.getObjectByName('Head') });
+      // A lord's robes and sleeves reach well past a farmer's elbows (1.0–1.45 units at scale 2.4): keep others that far off.
+      Object.assign(obj.userData, { kind, name, theirs, head: obj.getObjectByName('Head'), ...(kind === 'lord' ? { r: 1.2 } : {}) });
       const mixer = new THREE.AnimationMixer(obj);
       let gait: Gait | undefined;
       if (clip) {

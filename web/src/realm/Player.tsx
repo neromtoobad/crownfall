@@ -12,7 +12,7 @@ import { HOUSES } from './layout.ts';
 import { HORSE_SCALE, WHEEL_X, chariotMats, horseDepth, horseMaterial, rigHorse, runnerWorld, useChariotGeo } from './Race.tsx';
 import { M, live, setWatch } from './race.ts';
 import { raceKey } from './drive.ts';
-import { emitPlay, keys, me, openPanel, pause, play, stick, takePressed, usePlay, type Seat, hushed, isAction, TOUCH } from './play.ts';
+import { emitPlay, keys, me, openPanel, pause, play, stick, takePressed, usePlay, type Seat, hushed, isAction, TOUCH, myWidth } from './play.ts';
 import { nextLine, story } from './missions.ts';
 import { mapOpen, openMap } from '../Radar.tsx';
 import { crackWhip, hoof, step, whinny } from './sound.ts';
@@ -300,7 +300,7 @@ function Player({ seat }: { seat: Seat }) {
       {
         // Every frame, even standing still: anyone or anything that has ended up against you pushes you clear.
         const go = me.speed * dt;
-        const r = moveBody(me.x, me.z, Math.sin(me.yaw) * go, Math.cos(me.yaw) * go, 0.9, true);
+        const r = moveBody(me.x, me.z, Math.sin(me.yaw) * go, Math.cos(me.yaw) * go, 0.9, true, undefined, myWidth());
         const got = Math.hypot(r.x - me.x, r.z - me.z);
         me.x = r.x; me.z = r.z;
         if (r.who && me.speed > 0.05) { if (now - (r.who.userData.bump ?? -9) > 2) speakAs('bumped', r.who); r.who.userData.bump = now; if (me.speed > 9) r.who.userData.dodge = side(r.who, me.x, me.z, me.yaw) * 2.5; }
