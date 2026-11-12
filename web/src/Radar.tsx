@@ -248,7 +248,7 @@ export function RaceTicker() {
   return (
     <button className={`race-soon${set ? ' set' : ''}`} onClick={(e) => { e.stopPropagation(); waypoint.at = set ? undefined : [STABLES[0], STABLES[1]]; gps.key = ''; emitPlay(); }}
       title={set ? 'Clear the route to the Hippodrome' : 'Set the route to the Hippodrome'}>
-      <i>H</i><span><b>{when}</b>{set ? 'Route set · follow the purple line' : `${liveRace.chain ? 'Bet on NEAR' : 'Race or bet'} at the Hippodrome · click for the route`}</span>
+      <i>H</i><span><b>{when}</b><em>{set ? 'Route set · follow the purple line' : `${liveRace.chain ? 'Bet on NEAR' : 'Race or bet'} at the Hippodrome · click for the route`}</em></span>
     </button>
   );
 }

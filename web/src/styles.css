@@ -283,6 +283,7 @@ button.item:hover:not(:disabled) { border-color: var(--gold); }
 .race-soon i { flex: none; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: #e8b53a; color: #1a130c; border: 2px solid #000; font: 700 11px/1 var(--sans); font-style: normal; }
 .race-soon span { display: flex; flex-direction: column; gap: 3px; font: 500 11px/1.2 var(--sans); color: var(--ink-2); }
 .race-soon b { font: 600 14px/1 var(--serif); color: #f6e7c4; font-variant-numeric: tabular-nums; }
+.race-soon em { font-style: normal; }
 .race-soon.set { border-color: #c86bff; }
 .race-soon.set i { background: #c86bff; }
 .fullmap-side .hover { font: italic 15px/1.3 var(--serif); color: var(--gold); }
@@ -601,7 +602,7 @@ html.touch .status .coinrow { font-size: 12px; }
 html.touch .status .crowns { font-size: 12px; }
 html.touch .status .who, html.touch .status .practice { display: none; }
 html.touch .radar { right: var(--sr); top: calc(var(--st) + 58px); }
-html.touch .sealbar { right: calc(var(--sr) + 92px); top: var(--st); padding: 3px 8px 3px 5px; gap: 4px; }
+html.touch .sealbar { right: calc(var(--sr) + 92px); top: var(--st); padding: 3px 8px 3px 5px; gap: 4px; pointer-events: auto; }
 html.touch .sealbar i { width: 20px; height: 20px; font-size: 10px; }
 html.touch .sealbar span { font-size: 11px; margin-left: 3px; }
 html.touch .objective { top: calc(var(--st) + 40px); bottom: auto; min-width: 0; max-width: calc(100% - 300px); font-size: 12px; padding: 4px 10px; }
@@ -701,6 +702,8 @@ button.ff:hover { background: rgba(214, 178, 110, 0.16); }
 .week-log li.shut { color: #f0b8a0; } .week-log li.reopen { color: var(--near); }
 @media (max-width: 560px) { .week-houses { grid-template-columns: repeat(2, 1fr); } }
 
-html.touch .race-soon { left: auto; right: var(--sr, 12px); bottom: auto; top: calc(var(--st, 28px) + 176px); max-width: 200px; padding: 5px 9px 5px 5px; }
-html.touch .race-soon span { font-size: 10px; }
+/* On a phone it is one short line tucked under the radar, clear of the tips and the action buttons. */
+html.touch .race-soon { left: auto; right: var(--sr, 12px); bottom: auto; top: calc(var(--st, 28px) + 172px); max-width: 170px; gap: 6px; padding: 3px 9px 3px 3px; }
+html.touch .race-soon i { width: 18px; height: 18px; font-size: 9px; }
+html.touch .race-soon em { display: none; }
 html.touch .race-soon b { font-size: 12px; }
