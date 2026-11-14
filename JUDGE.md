@@ -8,8 +8,9 @@ Each claim below comes with a way to check it. Every link goes to the chain, the
 - **Live proof, no sign-in:** https://crownfall.nerom.site/proof ([JSON](https://crownfall.nerom.site/proof.json)).
   Reads the contract, the rival agents' feed and the transaction index live, and checks the deployed code hash
   against the reproducible build in section 3.
-- **Activity (12 November, 18:45 UTC):** 3,445 transactions on the contract from 28 accounts; 398 races run and settled
-  on chain; 623 bets; 525 hall rounds entered; about 3,180 transactions signed by the four rival agents.
+- **Activity (14 November, 06:24 UTC):** 6,853 transactions on the contract; 951 races run and settled on chain;
+  523,200 house coin burned by hall rounds and whips; season 3 ends 14 November, 15:00 UTC with 2.92 NEAR in the crown
+  pool. Live numbers: [/proof.json](https://crownfall.nerom.site/proof.json).
 - **Demo (2:10):** https://x.com/neromtoobad/status/2119855648150339694
 - **Contract:** [`crownfall-vael.testnet`](https://testnet.nearblocks.io/address/crownfall-vael.testnet), source in [`chain/`](chain/src/lib.rs)
 - **Tracks:** Games, Memecoins, Social Money, Open Innovation (the [README](README.md#hackathon-tracks) maps each one to the code)
