@@ -13,6 +13,8 @@
 
 <p align="center"><a href="https://github.com/neromtoobad/crownfall/actions/workflows/contract.yml"><img src="https://github.com/neromtoobad/crownfall/actions/workflows/contract.yml/badge.svg" alt="contract tests"></a> <b>52 contract tests</b> run on every push to <code>chain/</code></p>
 
+<p align="center"><b>7,142 transactions · 951 races run by the contract · 3 seasons crowned · 52 contract tests · deployed code matches the reproducible build</b><br><sub>Live numbers at <a href="https://crownfall.nerom.site/proof">crownfall.nerom.site/proof</a>, read from the chain. Counted 14 November, 21:20 UTC.</sub></p>
+
 <p align="center"><img src="docs/shots/01-realm.jpg" alt="The realm of Vael from above: eight keeps around a river valley, the capital in the middle" width="100%"></p>
 
 Ride a chariot across Vael, walk into any house's hall and play its game, back a team at the Hippodrome, and earn the
@@ -34,14 +36,12 @@ economy; the contract's rules run it. And you never see the chain: sign in with 
 
 **[crownfall.nerom.site/proof](https://crownfall.nerom.site/proof)** reads the contract, the rival agents and the
 transaction index live, with no sign-in ([`/proof.json`](https://crownfall.nerom.site/proof.json) for scripts). It
-also checks that the deployed code is the reproducible build of this repo. As of 12 November, 18:45 UTC:
+also checks that the deployed code is the reproducible build of this repo. As of 14 November, 21:20 UTC:
 
-- **3,445 transactions** on [`crownfall-vael.testnet`](https://testnet.nearblocks.io/address/crownfall-vael.testnet) since 8 November, from 28 accounts.
-- **398 races** run and settled by the contract, with 623 bets, 357 whips and 93 winning claims.
-- **525 hall rounds** entered, each one burning that house's coin.
-- **About 3,180 of those transactions were signed by the four rival agents**, from their own accounts.
-- **Season 1 is over:** House Halloway was [crowned on chain](https://testnet.nearblocks.io/txns/59xadvSBtkGywUdMtzbvmcaeDKogEyE4Yy3KiigtcNKT) and a
-  Halloway player [took a share of the pool](https://testnet.nearblocks.io/txns/8HehnS9v1Sy2Dn21Br38trGKRXUJeGMjzSGEhR6TGY7D). Season 2 ends 13 November, 15:00 UTC.
+- **7,142 transactions** on [`crownfall-vael.testnet`](https://testnet.nearblocks.io/address/crownfall-vael.testnet) since 8 November, most of them signed by the four rival agents from their own accounts.
+- **951 races** called, run and settled by the contract.
+- **1,015 hall rounds** entered, each one burning that house's coin. Play is uneven: Halloway 329, Sorrel 319, Marrow 247 and Thorne 114 rounds, while Ashveil (4), Velmont (2), Corrin and Draven (0) have barely been played yet.
+- **Three seasons crowned on chain:** Halloway took season 1 ([crown](https://testnet.nearblocks.io/txns/59xadvSBtkGywUdMtzbvmcaeDKogEyE4Yy3KiigtcNKT)), Marrow took season 2 (an 18.89 NEAR pool) and season 3 ([crown](https://testnet.nearblocks.io/txns/25FbkGMoBaDk8MkGczdej8LFqtnomDuuLM8LcM3itzTc), 2.99 NEAR, [claimed by its players](https://testnet.nearblocks.io/txns/G7HoL6P5U35ztUivwDjcjcX42tMYu1DMK31FoyEszBsW)). Season 4 is running.
 
 ## Games With Real Economies, claim by claim
 
