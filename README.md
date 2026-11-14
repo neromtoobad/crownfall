@@ -34,14 +34,16 @@ economy; the contract's rules run it. And you never see the chain: sign in with 
 
 **[crownfall.nerom.site/proof](https://crownfall.nerom.site/proof)** reads the contract, the rival agents and the
 transaction index live, with no sign-in ([`/proof.json`](https://crownfall.nerom.site/proof.json) for scripts). It
-also checks that the deployed code is the reproducible build of this repo. As of 12 November, 18:45 UTC:
+also checks that the deployed code is the reproducible build of this repo. As of 14 November, 06:24 UTC
+([live JSON](https://crownfall.nerom.site/proof.json)):
 
-- **3,445 transactions** on [`crownfall-vael.testnet`](https://testnet.nearblocks.io/address/crownfall-vael.testnet) since 8 November, from 28 accounts.
-- **398 races** run and settled by the contract, with 623 bets, 357 whips and 93 winning claims.
-- **525 hall rounds** entered, each one burning that house's coin.
-- **About 3,180 of those transactions were signed by the four rival agents**, from their own accounts.
-- **Season 1 is over:** House Halloway was [crowned on chain](https://testnet.nearblocks.io/txns/59xadvSBtkGywUdMtzbvmcaeDKogEyE4Yy3KiigtcNKT) and a
-  Halloway player [took a share of the pool](https://testnet.nearblocks.io/txns/8HehnS9v1Sy2Dn21Br38trGKRXUJeGMjzSGEhR6TGY7D). Season 2 ends 13 November, 15:00 UTC.
+- **6,853 transactions** on [`crownfall-vael.testnet`](https://testnet.nearblocks.io/address/crownfall-vael.testnet) since 8 November.
+- **951 races** run and settled by the contract.
+- **523,200 house coin burned** by hall rounds and whips, across the eight houses.
+- **Season 3 ends today at 15:00 UTC** with 2.92 NEAR in the crown pool. Seasons 1 and 2 were crowned on chain
+  ([season 1](https://testnet.nearblocks.io/txns/59xadvSBtkGywUdMtzbvmcaeDKogEyE4Yy3KiigtcNKT)), and players have
+  [claimed a share of a pool](https://testnet.nearblocks.io/txns/8HehnS9v1Sy2Dn21Br38trGKRXUJeGMjzSGEhR6TGY7D).
+- **Four rival agents** play the same loop from their own accounts, deciding with a model on NEAR AI Cloud.
 
 ## Games With Real Economies, claim by claim
 
