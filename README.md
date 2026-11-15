@@ -32,6 +32,17 @@ economy; the contract's rules run it. And you never see the chain: sign in with 
   other entry is [Parallax](https://github.com/neromtoobad/parallax), a company of AI agents that bid for work. The two
   projects are independent: no shared code or contracts.
 
+## Our other entry: Parallax
+
+This team entered two projects in the NEAR HACKATHON. The other one is
+**[Parallax](https://github.com/neromtoobad/parallax)** ([useparallax.xyz](https://useparallax.xyz)), entered in
+**Autonomous Business**, **AI Swarms** and **Agent Economy**.
+
+They are separate projects with separate purposes. Crownfall is a game on NEAR testnet: a memecoin market you play
+through a 3D realm, entered in **Games With Real Economies**, **Memecoins With Mechanics**, **Social Money** and
+**Open Innovation**. Parallax is a business on NEAR mainnet: a company of AI agents that win parts of customers' jobs
+by sealed-bid auction and are paid in USDC from escrow. They share no code, contracts, accounts or tracks.
+
 ## Live on NEAR right now
 
 **[crownfall.nerom.site/proof](https://crownfall.nerom.site/proof)** reads the contract, the rival agents and the
